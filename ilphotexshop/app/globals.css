@@ -1804,7 +1804,9 @@ select:focus-visible {
 
 .checkout-page {
   min-height: 100vh;
-  background: var(--background);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(20, 101, 184, 0.08), transparent 26rem),
+    var(--background);
 }
 
 .checkout-topbar {
