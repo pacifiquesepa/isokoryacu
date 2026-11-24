@@ -14,6 +14,10 @@ import {
   requireUserRole,
 } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
+import {
+  InsufficientProductStockError,
+  recordOrderSale,
+} from "@/lib/data-access/inventory";
 import type { PaymentProofDocument } from "@/lib/http/payment-proof-upload";
 import type {
   PaymentProofReview,
@@ -121,6 +125,93 @@ export async function getActivePaymentAccounts() {
   });
 }
 
+export async function getCustomerPaymentProofs(
+  customerId: string,
+  status: OrderPaymentProofStatus | undefined,
+  offset: number,
+  limit: number,
+) {
+  const where: Prisma.OrderPaymentProofWhereInput = {
+    customerId,
+    ...(status ? { status } : {}),
+  };
+  const [rows, total, pending, approved, rejected] = await prisma.$transaction([
+    prisma.orderPaymentProof.findMany({
+      where,
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        method: true,
+        transactionReference: true,
+        status: true,
+        createdAt: true,
+        order: { select: { id: true } },
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit,
+      skip: offset,
+    }),
+    prisma.orderPaymentProof.count({ where }),
+    prisma.orderPaymentProof.count({
+      where: { customerId, status: OrderPaymentProofStatus.pending },
+    }),
+    prisma.orderPaymentProof.count({
+      where: { customerId, status: OrderPaymentProofStatus.approved },
+    }),
+    prisma.orderPaymentProof.count({
+      where: { customerId, status: OrderPaymentProofStatus.rejected },
+    }),
+  ]);
+  return { rows, total, pending, approved, rejected };
+}
+
+export async function getCustomerPaymentProof(
+  customerId: string,
+  proofId: string,
+) {
+  return prisma.orderPaymentProof.findFirst({
+    where: { id: proofId, customerId },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      method: true,
+      transactionReference: true,
+      documentName: true,
+      status: true,
+      reviewReason: true,
+      createdAt: true,
+      reviewedAt: true,
+      order: {
+        select: {
+          id: true,
+          status: true,
+          createdAt: true,
+          subtotal: true,
+          deliveryFee: true,
+          currency: true,
+        },
+      },
+    },
+  });
+}
+
+export async function getCustomerPaymentProofDocument(
+  customerId: string,
+  orderId: string,
+  proofId: string,
+) {
+  return prisma.orderPaymentProof.findFirst({
+    where: { id: proofId, orderId, customerId },
+    select: {
+      document: true,
+      documentName: true,
+      documentMimeType: true,
+    },
+  });
+}
+
 export async function submitOrderPaymentProof(
   customerId: string,
   orderId: string,
@@ -129,10 +220,10 @@ export async function submitOrderPaymentProof(
 ) {
   return prisma.$transaction(async (transaction) => {
     const orders = await transaction.$queryRaw<
-      { subtotal: number; currency: string; status: OrderStatus }[]
+      { subtotal: number; deliveryFee: number; currency: string; status: OrderStatus }[]
     >(
       Prisma.sql`
-        SELECT "subtotal", "currency", "status"
+        SELECT "subtotal", "deliveryFee", "currency", "status"
         FROM "Order"
         WHERE "id" = ${orderId} AND "customerId" = ${customerId}
         FOR UPDATE
@@ -167,7 +258,7 @@ export async function submitOrderPaymentProof(
       data: {
         orderId,
         customerId,
-        amount: order.subtotal,
+        amount: order.subtotal + order.deliveryFee,
         currency: order.currency,
         method:
           input.method === "bank_transfer"
@@ -220,7 +311,15 @@ export async function getSuperAdminPaymentProofQueue(
         reviewReason: true,
         createdAt: true,
         customer: { select: { name: true, email: true } },
-        order: { select: { id: true, status: true, subtotal: true, currency: true } },
+        order: {
+          select: {
+            id: true,
+            status: true,
+            subtotal: true,
+            deliveryFee: true,
+            currency: true,
+          },
+        },
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: 50,
@@ -319,21 +418,25 @@ export async function reviewOrderPaymentProof(
     if (decision.action === "approve") {
       const items = await transaction.orderItem.findMany({
         where: { orderId: proofReference.orderId },
-        select: { productId: true, quantity: true },
+        select: {
+          id: true,
+          productId: true,
+          productName: true,
+          quantity: true,
+        },
       });
-      for (const item of items) {
-        if (!item.productId) continue;
-        const stockUpdate = await transaction.product.updateMany({
-          where: {
-            id: item.productId,
-            isPublished: true,
-            stockQuantity: { gte: item.quantity },
-          },
-          data: { stockQuantity: { decrement: item.quantity } },
-        });
-        if (stockUpdate.count !== 1) {
+      try {
+        await recordOrderSale(
+          transaction,
+          proofReference.orderId,
+          items,
+          actorId,
+        );
+      } catch (error) {
+        if (error instanceof InsufficientProductStockError) {
           throw new PaymentProofReviewConflictError();
         }
+        throw error;
       }
     }
     return transaction.orderPaymentProof.findUnique({

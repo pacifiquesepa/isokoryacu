@@ -11,6 +11,21 @@ export const orderStatusSchema = z.enum([
   "cancelled",
 ]);
 
+export const deliveryZoneSchema = z.enum([
+  "kigali",
+  "outside_kigali",
+  "international",
+]);
+
+export const deliverySettingsSchema = z
+  .object({
+    deliveryFeeRwf: z.number().int().min(0).max(10_000_000),
+    etaKigali: z.string().trim().min(3).max(120),
+    etaOutsideKigali: z.string().trim().min(3).max(120),
+    etaInternational: z.string().trim().min(3).max(120),
+  })
+  .strict();
+
 const orderItemSchema = z
   .object({
     productId: productIdSchema,
@@ -52,9 +67,14 @@ export const createOrderSchema = z
       ),
     deliveryAddress: z.string().trim().min(5).max(500),
     fulfillmentMethod: z.enum(["delivery", "pickup"]).default("delivery"),
+    paymentMode: z.enum(["receipt", "cash_on_delivery"]).default("receipt"),
+    deliveryZone: deliveryZoneSchema.optional(),
     pickupLocation: z.string().trim().max(500).optional(),
     deliveryLatitude: z.number().min(-90).max(90).optional(),
     deliveryLongitude: z.number().min(-180).max(180).optional(),
+    notifyByEmail: z.boolean().default(false),
+    notifyByWhatsapp: z.boolean().default(false),
+    notificationLanguage: z.enum(["en", "fr", "rw"]).default("en"),
   })
   .strict()
   .superRefine((order, context) => {
@@ -64,6 +84,13 @@ export const createOrderSchema = z
           code: "custom",
           message: "Delivery address is required",
           path: ["deliveryAddress"],
+        });
+      }
+      if (!order.deliveryZone) {
+        context.addIssue({
+          code: "custom",
+          message: "Delivery zone is required",
+          path: ["deliveryZone"],
         });
       }
     } else if (!order.pickupLocation) {
@@ -134,5 +161,12 @@ export const orderDisputeReviewSchema = z
   })
   .strict();
 
+export const cashCollectionSchema = z
+  .object({
+    reference: z.string().trim().min(3).max(120).optional(),
+  })
+  .strict();
+
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+export type DeliverySettingsInput = z.infer<typeof deliverySettingsSchema>;
 export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;

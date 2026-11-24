@@ -14,6 +14,13 @@ function maskDestination(value: string | null | undefined) {
   return normalized.length <= 4 ? "••••" : `••••${normalized.slice(-4)}`;
 }
 
+function kycActionLabel(action: string) {
+  if (action === "reverification_requested") return "Re-verification requested";
+  if (action === "approved") return "Approved";
+  if (action === "rejected") return "Declined";
+  return "Erased";
+}
+
 export default async function MerchantDetailPage({
   params,
   searchParams,
@@ -53,7 +60,7 @@ export default async function MerchantDetailPage({
         {tab === "payments" && <dl className="super-admin-record-fields"><div className="super-admin-record-field"><dt>Payout destination</dt><dd>{merchant.merchantFinancialProfile ? `${merchant.merchantFinancialProfile.accountName} · ${merchant.merchantFinancialProfile.currency}` : "Not configured"}</dd></div><div className="super-admin-record-field"><dt>Bank</dt><dd>{merchant.merchantFinancialProfile?.bankName ?? "Not provided"} {merchant.merchantFinancialProfile?.bankAccountNumber ? `· ${maskDestination(merchant.merchantFinancialProfile.bankAccountNumber)}` : ""}</dd></div><div className="super-admin-record-field"><dt>Mobile money</dt><dd>{merchant.merchantFinancialProfile?.mobileMoneyProvider ?? "Not provided"} {merchant.merchantFinancialProfile?.mobileMoneyNumber ? `· ${maskDestination(merchant.merchantFinancialProfile.mobileMoneyNumber)}` : ""}</dd></div><div className="super-admin-record-field"><dt>Verification</dt><dd>{merchant.merchantFinancialProfile?.isVerified ? "Verified" : "Unverified"}</dd></div></dl>}
         {tab === "earnings" && <p className="super-admin-data-note" role="note">Merchant earnings and settlement balances are not available: the system has no settlement workflow or approved commission configuration.</p>}
         {tab === "verification" && <dl className="super-admin-record-fields"><div className="super-admin-record-field"><dt>KYC status</dt><dd>{merchant.merchantKyc?.status ?? "Not submitted"}</dd></div><div className="super-admin-record-field"><dt>Submitted</dt><dd>{merchant.merchantKyc?.submittedAt ? dateFormat.format(merchant.merchantKyc.submittedAt) : "Not submitted"}</dd></div><div className="super-admin-record-field"><dt>Reviewed</dt><dd>{merchant.merchantKyc?.reviewedAt ? dateFormat.format(merchant.merchantKyc.reviewedAt) : "Not reviewed"}</dd></div><div className="super-admin-record-field"><dt>Review reason</dt><dd>{merchant.merchantKyc?.reviewReason ?? "No reason recorded"}</dd></div></dl>}
-        {tab === "audit" && <div className="super-admin-detail-list">{[...accessAudit.map((row) => ({ id: row.id, label: `${row.action === "suspended" ? "Suspended" : "Reactivated"} by ${row.actor.name}`, detail: row.reason ?? "No reason recorded", date: row.createdAt })), ...kycAudit.map((row) => ({ id: row.id, label: `KYC ${row.action} by ${row.actor.name}`, detail: row.reason ?? "No reason recorded", date: row.createdAt }))].sort((a, b) => b.date.getTime() - a.date.getTime()).map((row) => <div key={row.id}><strong>{row.label}</strong><span>{row.detail}</span><small>{dateFormat.format(row.date)}</small></div>)}</div>}
+        {tab === "audit" && <div className="super-admin-detail-list">{[...accessAudit.map((row) => ({ id: row.id, label: `${row.action === "suspended" ? "Suspended" : "Reactivated"} by ${row.actor.name}`, detail: row.reason ?? "No reason recorded", date: row.createdAt })), ...kycAudit.map((row) => ({ id: row.id, label: `KYC ${kycActionLabel(row.action)} by ${row.actor.name}`, detail: row.reason ?? "No reason recorded", date: row.createdAt }))].sort((a, b) => b.date.getTime() - a.date.getTime()).map((row) => <div key={row.id}><strong>{row.label}</strong><span>{row.detail}</span><small>{dateFormat.format(row.date)}</small></div>)}</div>}
       </article>
     </div>
   );

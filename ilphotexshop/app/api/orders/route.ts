@@ -6,6 +6,7 @@ import {
   getCustomerOrders,
 } from "@/lib/data-access/orders";
 import { requireUserRole } from "@/lib/authorization";
+import { dispatchOrderNotificationsSafely } from "@/lib/notifications/order-notification-delivery";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import { rateLimitResponse } from "@/lib/http/rate-limit-response";
@@ -76,8 +77,12 @@ export async function POST(request: Request) {
       idempotencyKey.data,
       body.data,
     );
+    const notificationDelivery = await dispatchOrderNotificationsSafely(
+      result.order.id,
+      "placed",
+    );
     return Response.json(
-      { order: result.order, replayed: result.replayed },
+      { order: result.order, replayed: result.replayed, notificationDelivery },
       {
         status: result.replayed ? 200 : 201,
         headers: { "Cache-Control": "no-store" },

@@ -32,7 +32,7 @@ async function MerchantKycAuditContent() {
         <div>
           <div className="super-admin-breadcrumb">Workspace / Security / KYC decision audit</div>
           <h1>KYC decision audit</h1>
-          <p>Rejected applicant details and documents are not retained in this audit.</p>
+          <p>Applicant identity and document data are excluded from this audit.</p>
         </div>
         <span className="super-admin-audit-access">
           <ShieldCheck aria-hidden="true" size={17} /> Super-admin only
@@ -40,7 +40,7 @@ async function MerchantKycAuditContent() {
       </div>
       <section aria-label="KYC audit summary" className="super-admin-records-summary">
         <article className="super-admin-summary-card">
-          <span>Total KYC decisions</span>
+          <span>Total KYC actions</span>
           <strong>{numberFormat.format(data.total)}</strong>
         </article>
         <article className="super-admin-summary-card">
@@ -61,8 +61,8 @@ async function MerchantKycAuditContent() {
               <thead>
                 <tr>
                   <th scope="col">Application reference</th>
-                  <th scope="col">Super admin</th>
-                  <th scope="col">Decision</th>
+                  <th scope="col">Actor</th>
+                  <th scope="col">Action</th>
                   <th scope="col">Note</th>
                   <th scope="col">Time</th>
                   <th scope="col">Action</th>
@@ -78,7 +78,9 @@ async function MerchantKycAuditContent() {
                     </td>
                     <td>
                       <span className="super-admin-merchant-access-status">
-                        {row.action}
+                        {row.action === "reverification_requested"
+                          ? "Re-verification requested"
+                          : row.action}
                       </span>
                     </td>
                     <td className="super-admin-audit-reason">

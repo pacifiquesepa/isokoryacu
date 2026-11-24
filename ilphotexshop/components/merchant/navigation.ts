@@ -1,9 +1,12 @@
 import {
   ArrowUpRight,
+  Boxes,
   LayoutDashboard,
   Package,
   ShoppingBag,
+  Store,
   UserRound,
+  Wallet,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -22,6 +25,12 @@ export const merchantNavSections: MerchantNavSection[] = [
     items: [{ label: "Dashboard", href: "/merchant/dashboard" }],
   },
   {
+    id: "shop",
+    label: "My Shop",
+    icon: Store,
+    items: [{ label: "Shop profile", href: "/merchant/shop" }],
+  },
+  {
     id: "products",
     label: "My products",
     icon: Package,
@@ -37,6 +46,21 @@ export const merchantNavSections: MerchantNavSection[] = [
     label: "My orders",
     icon: ShoppingBag,
     items: [{ label: "Order items", href: "/merchant/orders" }],
+  },
+  {
+    id: "inventory",
+    label: "Inventory",
+    icon: Boxes,
+    items: [{ label: "Stock and movements", href: "/merchant/inventory" }],
+  },
+  {
+    id: "finance",
+    label: "Finance",
+    icon: Wallet,
+    items: [
+      { label: "Earnings overview", href: "/merchant/finance" },
+      { label: "Payout requests", href: "/merchant/finance#payouts" },
+    ],
   },
   {
     id: "account",

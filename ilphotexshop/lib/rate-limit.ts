@@ -43,6 +43,16 @@ const superAdminPasswordMutationLimiter = createLimiter(
   "15 m",
   "ilphotox:super-admin:password",
 );
+const customerProfileMutationLimiter = createLimiter(
+  10,
+  "10 m",
+  "ilphotox:customer:profile",
+);
+const customerPasswordMutationLimiter = createLimiter(
+  5,
+  "15 m",
+  "ilphotox:customer:password",
+);
 const orderReadLimiter = createLimiter(60, "1 m", "ilphotox:orders:read");
 const orderWriteLimiter = createLimiter(10, "1 h", "ilphotox:orders:write");
 const adminOrderWriteLimiter = createLimiter(30, "1 m", "ilphotox:orders:admin");
@@ -69,6 +79,11 @@ const merchantAccessWriteLimiter = createLimiter(
 );
 const merchantKycSubmitLimiter = createLimiter(5, "1 h", "ilphotox:merchant:kyc");
 const merchantKycReviewLimiter = createLimiter(30, "1 m", "ilphotox:merchant:kyc:review");
+const merchantShopMutationLimiter = createLimiter(
+  10,
+  "10 m",
+  "ilphotox:merchant:shop",
+);
 const paymentAccountMutationLimiter = createLimiter(
   10,
   "1 m",
@@ -211,6 +226,18 @@ export async function checkSuperAdminPasswordMutationLimit(
   return checkLimit(superAdminPasswordMutationLimiter, userId);
 }
 
+export async function checkCustomerProfileMutationLimit(
+  userId: string,
+): Promise<RateLimitResult> {
+  return checkLimit(customerProfileMutationLimiter, userId);
+}
+
+export async function checkCustomerPasswordMutationLimit(
+  userId: string,
+): Promise<RateLimitResult> {
+  return checkLimit(customerPasswordMutationLimiter, userId);
+}
+
 export async function checkOrderReadLimit(
   userId: string,
 ): Promise<RateLimitResult> {
@@ -269,6 +296,12 @@ export async function checkMerchantKycReviewLimit(
   userId: string,
 ): Promise<RateLimitResult> {
   return checkLimit(merchantKycReviewLimiter, userId);
+}
+
+export async function checkMerchantShopMutationLimit(
+  userId: string,
+): Promise<RateLimitResult> {
+  return checkLimit(merchantShopMutationLimiter, userId);
 }
 
 export async function checkPaymentAccountMutationLimit(

@@ -110,6 +110,7 @@ export const superAdminSections: NavigationSection[] = [
     },
     { label: "Merchant Staff", href: "/super-admin/merchants/merchant-staff" },
     { label: "Merchant Financial Profiles", href: "/super-admin/merchants/merchant-financial-profiles" },
+    { label: "Payout Account Change Requests", href: "/super-admin/merchants/financial-change-requests" },
     {
       label: "Merchant Performance",
       href: "/super-admin/merchants/merchant-performance",
@@ -173,6 +174,10 @@ export const superAdminSections: NavigationSection[] = [
       label: "Payment Overview",
       href: "/super-admin/payments",
     },
+    {
+      label: "Merchant Payout Requests",
+      href: "/super-admin/payments/merchant-payouts",
+    },
     { label: "All Transactions" },
     {
       label: "Pending Verification",
@@ -222,7 +227,7 @@ export const superAdminSections: NavigationSection[] = [
     { label: "Platform Commissions" },
     { label: "Merchant Earnings" },
     { label: "Pending Settlements" },
-    { label: "Merchant Payouts" },
+    { label: "Merchant Payouts", href: "/super-admin/payments/merchant-payouts" },
     { label: "Completed Settlements" },
     { label: "Refunds" },
     { label: "Tax Reports" },

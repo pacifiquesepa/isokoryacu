@@ -57,6 +57,30 @@ export const changeSuperAdminPasswordSchema = z
     }
   });
 
+export const changeCustomerPasswordSchema = z
+  .object({
+    currentPassword: passwordInputSchema,
+    newPassword: registrationPasswordSchema,
+    confirmPassword: registrationPasswordSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.newPassword !== value.confirmPassword) {
+      context.addIssue({
+        code: "custom",
+        message: "Passwords do not match",
+        path: ["confirmPassword"],
+      });
+    }
+    if (value.newPassword === value.currentPassword) {
+      context.addIssue({
+        code: "custom",
+        message: "Choose a password different from your current password",
+        path: ["newPassword"],
+      });
+    }
+  });
+
 export const merchantAccessActionSchema = z.discriminatedUnion("action", [
   z
     .object({

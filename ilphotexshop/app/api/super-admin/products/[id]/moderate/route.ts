@@ -35,6 +35,7 @@ export async function PATCH(
     );
     if (!result) return Response.json({ error: "Product not found" }, { status: 404 });
     revalidatePath("/super-admin/products/pending-approval");
+    revalidatePath("/super-admin/products/scheduled-products");
     revalidatePath("/super-admin/products");
     revalidatePath("/");
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });

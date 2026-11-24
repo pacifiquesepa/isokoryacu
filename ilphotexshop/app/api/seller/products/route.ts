@@ -1,7 +1,11 @@
 import {
   createSellerProduct,
-  createSellerProductWithImage,
+  createSellerProductWithImages,
   getManagedProducts,
+  InvalidProductCategoryError,
+  isProductSkuUniqueConstraintError,
+  InvalidProductScheduleError,
+  InvalidProductSubcategoryError,
 } from "@/lib/data-access/products";
 import { requireUserRole } from "@/lib/authorization";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
@@ -9,7 +13,7 @@ import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import {
   getProductFormFields,
   readProductFormData,
-  readProductImageUpload,
+  readProductImageUploads,
 } from "@/lib/http/product-image-upload";
 import { rateLimitResponse } from "@/lib/http/rate-limit-response";
 import {
@@ -20,6 +24,7 @@ import {
   createProductMetadataSchema,
   createProductSchema,
   listProductsQuerySchema,
+  productPublicationSchema,
 } from "@/lib/validation/products";
 
 export async function GET(request: Request) {
@@ -80,6 +85,13 @@ export async function POST(request: Request) {
       }
 
       const fields = getProductFormFields(formResult.form);
+      const publication = productPublicationSchema.safeParse(fields.publication);
+      if (!publication.success) {
+        return Response.json(
+          { error: "Invalid publication settings", details: publication.error.flatten() },
+          { status: 400 },
+        );
+      }
       if (fields.imageSource === "upload") {
         const metadata = createProductMetadataSchema.safeParse(fields.metadata);
         if (!metadata.success) {
@@ -88,17 +100,19 @@ export async function POST(request: Request) {
             { status: 400 },
           );
         }
-        const image = await readProductImageUpload(
-          formResult.form.get("imageFile"),
-          true,
-        );
-        if (!image.ok) {
-          return Response.json({ error: image.error }, { status: 400 });
+        const imageEntries = formResult.form.getAll("imageFiles");
+        if (imageEntries.length === 0 && formResult.form.has("imageFile")) {
+          imageEntries.push(formResult.form.get("imageFile")!);
         }
-        const product = await createSellerProductWithImage(
+        const images = await readProductImageUploads(imageEntries, true);
+        if (!images.ok) {
+          return Response.json({ error: images.error }, { status: 400 });
+        }
+        const product = await createSellerProductWithImages(
           seller,
           metadata.data,
-          image.image,
+          images.images,
+          publication.data,
         );
         return Response.json(product, {
           status: 201,
@@ -119,7 +133,7 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-      const product = await createSellerProduct(seller, body.data);
+      const product = await createSellerProduct(seller, body.data, publication.data);
       return Response.json(product, {
         status: 201,
         headers: { "Cache-Control": "no-store" },
@@ -135,6 +149,18 @@ export async function POST(request: Request) {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
+    if (error instanceof InvalidProductScheduleError) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof InvalidProductSubcategoryError) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof InvalidProductCategoryError) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    if (isProductSkuUniqueConstraintError(error)) {
+      return Response.json({ error: "That SKU is already in use" }, { status: 409 });
+    }
     return apiErrorResponse(
       error,
       "Failed to create seller product",

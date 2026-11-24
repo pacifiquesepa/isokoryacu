@@ -1067,3 +1067,7 @@ Security: Audit Logs, 2FA, secure invitations na payment protection.
 Inama yanjye: Merchant Dashboard tuyubake ku buryo umucuruzi abasha gucunga ubucuruzi bwe bwose atavuye muri ILPHOTX SHOP: gushyiraho products, kwakira orders, gucunga staff, gukurikirana amafaranga no kuvugana n'abakiriya.
 
 Intambwe ikurikira nziza ni ugukora Merchant Dashboard UI Foundation muri Next.js: Sidebar, Sub-sidebar, Header, Dashboard Cards na Charts, hanyuma tugatangira guhuza buri module na Prisma na PostgreSQL.
+
+(urasabwa kujya ushyiramo amacard ahoakenewe kandi amezeneza  akagaragara neza   hejuru ,kandi nahakenewe chart ugakoresha ayuruziga ahobiringobwa ndetse nahagaze  kugirango ajye agaragaza ibintuneza ,ugakora design yaburi page ikaba imezeneza , kandi ugakora system idafite akajagariki ,isaneza ,kandi ntushyiremo ibisobanturo bidakenewe  ukoreshe ibifite umumaro gusa ,kandi system ibe ifite security ,ikindi ibe iri responsive
+
+kandi kuri buri table hazajya haba hariho action iroho akajijo ka view Iyo ukanzeho uhita ubona byose  nibitagaragaye muritable  kandi bikaza biri kuri page imezeneza ifite design itiho logo ya system +name of system   na page ifite amabara neza ya system kandi hasi hari qrcode    byose bimezeneza ,harinakandi kantu kadesign kagaragaza download  kuburyo ushobora guhta ukora download pdf imezeneza igararaza ibyo byose nkuko wakoze view ukabibona ,hakazaho nindi design ya share imezeneza kuburyo umuntu ashobora guhita akora share yiyo pdf imezeneza   igaragara Iyo record neza

@@ -4,15 +4,18 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowUpRight,
+  AlertTriangle,
   ClipboardList,
   Eye,
   Package,
   PackageCheck,
   ShoppingBag,
   Tag,
+  Wallet,
 } from "lucide-react";
 import { requireMerchantPageUser } from "@/lib/authorization";
 import { getMerchantDashboardData } from "@/lib/data-access/merchant-dashboard";
+import { getMerchantFinanceSummary } from "@/lib/data-access/merchant-finance";
 import AnnouncementFeed from "@/components/announcements/announcement-feed";
 
 export const metadata: Metadata = {
@@ -174,8 +177,12 @@ export default function MerchantDashboardPage() {
 
 async function MerchantDashboardContent() {
   const seller = await requireMerchantPageUser();
+  const [dashboard, finance] = await Promise.all([
+    getMerchantDashboardData(seller),
+    getMerchantFinanceSummary(seller),
+  ]);
   const { stats, orderActivity, recentProducts, recentOrders, bestSellers } =
-    await getMerchantDashboardData(seller);
+    dashboard;
 
   const cards = [
     {
@@ -209,6 +216,22 @@ async function MerchantDashboardContent() {
       icon: Tag,
       tone: "red",
       href: "/merchant/products",
+    },
+    {
+      label: "Low-stock alerts",
+      value: stats.lowStockProducts,
+      detail: "Products at their alert threshold",
+      icon: AlertTriangle,
+      tone: "red",
+      href: "/merchant/inventory",
+    },
+    {
+      label: "Available balance",
+      value: finance.available,
+      detail: "Eligible for payout · RWF",
+      icon: Wallet,
+      tone: "green",
+      href: "/merchant/finance",
     },
   ];
 
@@ -253,7 +276,7 @@ async function MerchantDashboardContent() {
       <div className="merchant-info-banner" role="note">
         <ClipboardList aria-hidden="true" size={17} />
         Orders are shared across the marketplace. Only order items belonging to
-        your shop are shown here; payment and payout data are not yet available.
+        your shop are shown here. <Link href="/merchant/finance">View earnings and payouts</Link>.
       </div>
 
       <section className="merchant-dashboard-grid">
@@ -337,7 +360,7 @@ async function MerchantDashboardContent() {
               <tbody>
                 {recentOrders.map((order) => {
                   const sellerSubtotal = order.items.reduce(
-                    (sum, item) => sum + item.lineTotal,
+                    (sum, item) => sum + item.merchantLineTotal,
                     0,
                   );
                   return (

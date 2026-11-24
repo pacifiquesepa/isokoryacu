@@ -20,7 +20,15 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
   timeZone: "UTC",
 });
 const amountFormat = new Intl.NumberFormat("en-RW");
-const statuses = ["pending", "confirmed", "fulfilled", "cancelled"] as const;
+const statuses = [
+  "pending",
+  "confirmed",
+  "processing",
+  "shipped",
+  "delivered",
+  "fulfilled",
+  "cancelled",
+] as const;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default function CustomerOrdersPage({
@@ -104,46 +112,90 @@ async function CustomerOrdersContent({
         </nav>
 
         {result.orders.length ? (
-          <div className="customer-orders-table-wrap">
-            <table className="customer-orders-table">
-              <thead>
-                <tr>
-                  <th scope="col">Order</th>
-                  <th scope="col">Placed</th>
-                  <th scope="col">Items</th>
-                  <th scope="col">Subtotal</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.orders.map((order) => (
-                  <tr key={order.id}>
-                    <td><strong>#{order.id.slice(-8).toUpperCase()}</strong></td>
-                    <td>{dateFormat.format(order.createdAt)}</td>
-                    <td>
-                      {order.items.reduce((sum, item) => sum + item.quantity, 0)}
-                    </td>
-                    <td>{amountFormat.format(order.subtotal)} {order.currency}</td>
-                    <td>
+          <>
+            <div className="customer-orders-table-wrap customer-orders-desktop">
+              <table className="customer-orders-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Order</th>
+                    <th scope="col">Placed</th>
+                    <th scope="col">Items</th>
+                    <th scope="col">Total</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.orders.map((order) => (
+                    <tr key={order.id}>
+                      <td><strong>#{order.id.slice(-8).toUpperCase()}</strong></td>
+                      <td>{dateFormat.format(order.createdAt)}</td>
+                      <td>
+                        {order.items.reduce((sum, item) => sum + item.quantity, 0)}
+                      </td>
+                      <td>{amountFormat.format(order.subtotal + order.deliveryFee)} {order.currency}</td>
+                      <td>
+                        <span className={`customer-order-status is-${order.status}`}>
+                          {order.status}
+                        </span>
+                      </td>
+                      <td>
+                        <Link
+                          aria-label={`View order ${order.id}`}
+                          className="customer-order-view"
+                          href={`/orders/${encodeURIComponent(order.id)}`}
+                        >
+                          <Eye aria-hidden="true" size={15} /> View
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="customer-orders-cards">
+              {result.orders.map((order) => {
+                const itemCount = order.items.reduce(
+                  (sum, item) => sum + item.quantity,
+                  0,
+                );
+                return (
+                  <article className="customer-order-card" key={order.id}>
+                    <div className="customer-order-card-heading">
+                      <div>
+                        <strong>#{order.id.slice(-8).toUpperCase()}</strong>
+                        <time dateTime={order.createdAt.toISOString()}>
+                          {dateFormat.format(order.createdAt)}
+                        </time>
+                      </div>
                       <span className={`customer-order-status is-${order.status}`}>
                         {order.status}
                       </span>
-                    </td>
-                    <td>
-                      <Link
-                        aria-label={`View order ${order.id}`}
-                        className="customer-order-view"
-                        href={`/orders/${encodeURIComponent(order.id)}`}
-                      >
-                        <Eye aria-hidden="true" size={15} /> View
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                    <div className="customer-order-card-details">
+                      <div>
+                        <span>Items</span>
+                        <strong>{itemCount}</strong>
+                      </div>
+                      <div>
+                        <span>Total</span>
+                        <strong>
+                          {amountFormat.format(order.subtotal + order.deliveryFee)}{" "}
+                          {order.currency}
+                        </strong>
+                      </div>
+                    </div>
+                    <Link
+                      className="customer-order-card-action"
+                      href={`/orders/${encodeURIComponent(order.id)}`}
+                    >
+                      <Eye aria-hidden="true" size={16} /> View order
+                    </Link>
+                  </article>
+                );
+              })}
+            </div>
+          </>
         ) : (
           <div className="customer-orders-empty">
             <ShoppingBag aria-hidden="true" size={28} />

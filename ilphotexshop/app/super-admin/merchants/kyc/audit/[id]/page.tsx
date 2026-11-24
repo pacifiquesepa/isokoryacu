@@ -42,10 +42,14 @@ async function MerchantKycAuditDetailContent({
 
   const entry = await getSuperAdminMerchantKycAuditDetail(parsedId.data);
   if (!entry) notFound();
-  const title = `Merchant KYC ${entry.action}`;
+  const actionLabel =
+    entry.action === "reverification_requested"
+      ? "Re-verification requested"
+      : `Merchant KYC ${entry.action}`;
+  const title = actionLabel;
   const fields = [
     { label: "Audit entry ID", value: entry.id },
-    { label: "Action", value: entry.action },
+    { label: "Action", value: actionLabel },
     { label: "Application reference", value: entry.applicationId },
     {
       label: "Applicant information",

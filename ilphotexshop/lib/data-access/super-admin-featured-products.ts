@@ -34,6 +34,7 @@ export async function getSuperAdminFeaturedProducts(
           image: true,
           seller: true,
           category: true,
+          categoryInfo: { select: { name: true } },
           price: true,
           stockQuantity: true,
           isFeatured: true,

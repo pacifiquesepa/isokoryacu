@@ -32,6 +32,7 @@ export async function getSuperAdminPendingProducts(query: string, page: number) 
           image: true,
           seller: true,
           category: true,
+          categoryInfo: { select: { name: true } },
           price: true,
           stockQuantity: true,
           location: true,

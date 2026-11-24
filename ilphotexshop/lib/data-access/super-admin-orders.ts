@@ -3,6 +3,7 @@ import "server-only";
 import { OrderStatus, Prisma } from "@prisma/client";
 import { requireSuperAdminPageUser } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
+import { enqueueOrderNotifications } from "@/lib/data-access/order-notifications";
 
 export const SUPER_ADMIN_ORDERS_PAGE_SIZE = 20;
 
@@ -112,24 +113,33 @@ export async function createOrderShipment(
   input: { carrier: string; trackingNumber: string; status: "processing" | "shipped" | "delivered"; notes?: string },
 ) {
   await requireSuperAdminPageUser("/super-admin/orders");
-  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
-  if (!order) return null;
-  const shipment = await prisma.orderShipment.create({
-    data: {
-      orderId,
-      carrier: input.carrier,
-      trackingNumber: input.trackingNumber,
-      status: input.status,
-      notes: input.notes,
-      shippedAt: input.status === "shipped" || input.status === "delivered" ? new Date() : null,
-      deliveredAt: input.status === "delivered" ? new Date() : null,
-    },
+  return prisma.$transaction(async (transaction) => {
+    const order = await transaction.order.findUnique({
+      where: { id: orderId },
+      select: { id: true },
+    });
+    if (!order) return null;
+    const shipment = await transaction.orderShipment.create({
+      data: {
+        orderId,
+        carrier: input.carrier,
+        trackingNumber: input.trackingNumber,
+        status: input.status,
+        notes: input.notes,
+        shippedAt:
+          input.status === "shipped" || input.status === "delivered"
+            ? new Date()
+            : null,
+        deliveredAt: input.status === "delivered" ? new Date() : null,
+      },
+    });
+    await transaction.order.update({
+      where: { id: orderId },
+      data: { status: input.status },
+    });
+    await enqueueOrderNotifications(transaction, orderId, input.status);
+    return shipment;
   });
-  await prisma.order.update({
-    where: { id: orderId },
-    data: { status: input.status },
-  });
-  return shipment;
 }
 
 export async function getSuperAdminRefunds(query: string, page: number) {
@@ -218,11 +228,19 @@ export async function createOrderRefundRequest(
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, customerId },
-    select: { id: true, subtotal: true, currency: true, status: true },
+    select: {
+      id: true,
+      subtotal: true,
+      deliveryFee: true,
+      currency: true,
+      status: true,
+    },
   });
   if (!order) return null;
   if (input.currency !== order.currency.trim()) throw new Error("Refund currency must match the order");
-  if (input.amount > order.subtotal) throw new Error("Refund amount cannot exceed the order subtotal");
+  if (input.amount > order.subtotal + order.deliveryFee) {
+    throw new Error("Refund amount cannot exceed the order total");
+  }
   return prisma.orderRefund.create({
     data: {
       orderId,

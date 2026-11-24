@@ -1,25 +1,39 @@
 import "server-only";
 
 import { OrderStatus, Prisma, UserRole } from "@prisma/client";
-import type { ProductCategory, User } from "@prisma/client";
+import type { User } from "@prisma/client";
 import { AuthorizationDeniedError } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
-import type { ListProductsQuery } from "@/lib/validation/products";
+import {
+  productSpecificationSchema,
+  type ListProductsQuery,
+} from "@/lib/validation/products";
 
 type MerchantActor = Pick<User, "id" | "name" | "email" | "role">;
 
-export type MerchantProductFilter = "all" | "published" | "unpublished";
+export type MerchantProductFilter =
+  | "all"
+  | "published"
+  | "unpublished"
+  | "draft"
+  | "pending"
+  | "scheduled"
+  | "rejected"
+  | "hidden";
 
 export type MerchantProductRow = {
   id: string;
+  sku: string | null;
   name: string;
-  category: ProductCategory;
+  category: string;
   image: string;
   price: number;
   stockQuantity: number;
   rating: number;
   reviewCount: number;
   isPublished: boolean;
+  moderationStatus: string;
+  scheduledAt: Date | null;
   createdAt: Date;
 };
 
@@ -41,6 +55,7 @@ export async function getMerchantDashboardData(actor: MerchantActor) {
     publishedProducts,
     unpublishedProducts,
     outOfStockProducts,
+    lowStockRows,
     totalOrders,
     pendingOrders,
     confirmedOrders,
@@ -60,6 +75,15 @@ export async function getMerchantDashboardData(actor: MerchantActor) {
     prisma.product.count({
       where: { ...productWhere, stockQuantity: 0 },
     }),
+    prisma.$queryRaw<{ count: number }[]>(
+      Prisma.sql`
+        SELECT COUNT(*)::int AS count
+        FROM "Product" p
+        LEFT JOIN "ProductCategoryCatalog" c ON c."slug" = p."category"
+        WHERE p."ownerId" = ${actor.id}
+          AND p."stockQuantity" <= COALESCE(p."lowStockThreshold", c."lowStockThreshold", 3)
+      `,
+    ),
     prisma.order.count({ where: orderWhere }),
     prisma.order.count({
       where: { ...orderWhere, status: OrderStatus.pending },
@@ -76,6 +100,7 @@ export async function getMerchantDashboardData(actor: MerchantActor) {
         id: true,
         name: true,
         category: true,
+        categoryInfo: { select: { name: true } },
         image: true,
         price: true,
         stockQuantity: true,
@@ -98,9 +123,9 @@ export async function getMerchantDashboardData(actor: MerchantActor) {
           select: {
             id: true,
             productName: true,
-            unitPrice: true,
             quantity: true,
-            lineTotal: true,
+            merchantUnitPrice: true,
+            merchantLineTotal: true,
           },
         },
       },
@@ -131,7 +156,7 @@ export async function getMerchantDashboardData(actor: MerchantActor) {
         productId: { not: null },
         order: { status: { not: OrderStatus.cancelled } },
       },
-      _sum: { quantity: true, lineTotal: true },
+      _sum: { quantity: true, merchantLineTotal: true },
       orderBy: { _sum: { quantity: "desc" } },
       take: 5,
     }),
@@ -157,18 +182,22 @@ export async function getMerchantDashboardData(actor: MerchantActor) {
       publishedProducts,
       unpublishedProducts,
       outOfStockProducts,
+      lowStockProducts: lowStockRows[0]?.count ?? 0,
       totalOrders,
       pendingOrders,
       confirmedOrders,
       fulfilledOrders,
     },
     orderActivity,
-    recentProducts,
+    recentProducts: recentProducts.map(({ categoryInfo, ...product }) => ({
+      ...product,
+      category: categoryInfo.name,
+    })),
     recentOrders,
     bestSellers: bestSellers.map((item) => ({
       name: item.productName,
       quantity: item._sum?.quantity ?? 0,
-      value: item._sum?.lineTotal ?? 0,
+      value: item._sum?.merchantLineTotal ?? 0,
     })),
   };
 }
@@ -185,6 +214,12 @@ export async function getMerchantProducts(
       ? { isPublished: true }
       : filter === "unpublished"
         ? { isPublished: false }
+        : filter === "draft" ||
+            filter === "pending" ||
+            filter === "scheduled" ||
+            filter === "rejected" ||
+            filter === "hidden"
+          ? { moderationStatus: filter }
         : {}),
     ...(query.category ? { category: query.category } : {}),
     ...(query.q
@@ -208,6 +243,18 @@ export async function getMerchantProducts(
                 mode: Prisma.QueryMode.insensitive,
               },
             },
+            {
+              sku: {
+                contains: query.q,
+                mode: Prisma.QueryMode.insensitive,
+              },
+            },
+            {
+              brand: {
+                contains: query.q,
+                mode: Prisma.QueryMode.insensitive,
+              },
+            },
           ],
         }
       : {}),
@@ -225,14 +272,18 @@ export async function getMerchantProducts(
       where,
       select: {
         id: true,
+        sku: true,
         name: true,
         category: true,
+        categoryInfo: { select: { name: true } },
         image: true,
         price: true,
         stockQuantity: true,
         rating: true,
         reviewCount: true,
         isPublished: true,
+        moderationStatus: true,
+        scheduledAt: true,
         createdAt: true,
       },
       orderBy:
@@ -260,7 +311,10 @@ export async function getMerchantProducts(
   ]);
 
   return {
-    products,
+    products: products.map(({ categoryInfo, ...product }) => ({
+      ...product,
+      category: categoryInfo.name,
+    })),
     total,
     summary: {
       totalProducts,
@@ -273,23 +327,49 @@ export async function getMerchantProducts(
 
 export async function getMerchantProduct(actor: MerchantActor, id: string) {
   assertMerchant(actor);
-  return prisma.product.findFirst({
+  const product = await prisma.product.findFirst({
     where: { id, ownerId: actor.id },
     select: {
       id: true,
+      sku: true,
+      brand: true,
+      subcategoryId: true,
+      subcategory: {
+        select: { id: true, name: true, category: true, isActive: true },
+      },
       name: true,
       nameRw: true,
       nameFr: true,
+      description: true,
+      warranty: true,
+      specifications: true,
+      returnPolicy: true,
       category: true,
+      categoryInfo: { select: { name: true } },
       price: true,
       previousPrice: true,
       image: true,
       location: true,
       stockQuantity: true,
+      lowStockThreshold: true,
       isPublished: true,
+      moderationStatus: true,
+      scheduledAt: true,
+      uploadedImages: {
+        select: { id: true, sortOrder: true },
+        orderBy: { sortOrder: "asc" },
+      },
       createdAt: true,
     },
   });
+  if (!product) return null;
+  return {
+    ...product,
+    specifications:
+      product.specifications === null
+        ? null
+        : productSpecificationSchema.parse(product.specifications),
+  };
 }
 
 export async function getMerchantOrders(
@@ -316,9 +396,9 @@ export async function getMerchantOrders(
               id: true,
               productName: true,
               productImage: true,
-              unitPrice: true,
+              merchantUnitPrice: true,
               quantity: true,
-              lineTotal: true,
+              merchantLineTotal: true,
             },
             orderBy: { createdAt: "asc" },
           },
@@ -396,9 +476,9 @@ export async function getMerchantOrder(actor: MerchantActor, id: string) {
           productName: true,
           productImage: true,
           sellerName: true,
-          unitPrice: true,
+          merchantUnitPrice: true,
           quantity: true,
-          lineTotal: true,
+          merchantLineTotal: true,
         },
         orderBy: { createdAt: "asc" },
       },

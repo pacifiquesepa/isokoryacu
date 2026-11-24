@@ -81,6 +81,8 @@ async function RecordDetails({ params }: SuperAdminRecordPageProps) {
             <OrderWorkflowActions
               orderId={record.id}
               status={record.fields.find((field) => field.label === "Status")?.value ?? ""}
+              paymentMode={record.fields.find((field) => field.label === "Payment method")?.value}
+              cashCollected={record.fields.find((field) => field.label === "Cash collection")?.value !== "Not recorded"}
             />
           </div>
         )}

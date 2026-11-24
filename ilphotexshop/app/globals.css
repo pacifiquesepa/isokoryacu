@@ -1495,8 +1495,17 @@ select:focus-visible {
 .product-prices {
   display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 7px;
+}
+
+.product-fee-note {
+  display: block;
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .product-prices strong {
@@ -1919,7 +1928,7 @@ select:focus-visible {
 
 .checkout-choice-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
 }
 
@@ -2014,6 +2023,20 @@ select:focus-visible {
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+.checkout-notification-preferences label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.checkout-notification-preferences input {
+  margin-top: 2px;
+  accent-color: var(--primary);
 }
 
 .checkout-payment-account,
@@ -2656,7 +2679,7 @@ select:focus-visible {
 .drawer-layer,
 .modal-layer {
   position: fixed;
-  z-index: 20;
+  z-index: 100;
   inset: 0;
   display: flex;
 }
@@ -3019,6 +3042,11 @@ select:focus-visible {
   right: 13px;
 }
 
+.modal-product-media {
+  min-width: 0;
+  background: var(--surface-secondary);
+}
+
 .modal-product-image {
   min-height: 360px;
   background-color: var(--surface-secondary);
@@ -3026,7 +3054,30 @@ select:focus-visible {
   background-size: cover;
 }
 
+.modal-product-gallery {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 10px 12px;
+}
+
+.modal-product-gallery button {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  background-position: center;
+  background-size: cover;
+  cursor: pointer;
+}
+
+.modal-product-gallery button.is-selected {
+  border-color: var(--primary);
+}
+
 .modal-product-info {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -3069,6 +3120,48 @@ select:focus-visible {
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.8;
+}
+
+.modal-product-meta,
+.modal-product-extra dl {
+  display: grid;
+  width: 100%;
+  gap: 7px;
+  margin: 0 0 12px;
+}
+
+.modal-product-meta > div,
+.modal-product-extra dl > div {
+  display: grid;
+  grid-template-columns: minmax(85px, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+}
+
+.modal-product-meta dt,
+.modal-product-extra dt {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.modal-product-meta dd,
+.modal-product-extra dd,
+.modal-product-extra p {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.modal-product-extra {
+  width: 100%;
+  margin: 0 0 12px;
+}
+
+.modal-product-extra h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
 }
 
 .modal-add-button {
@@ -3732,6 +3825,10 @@ select:focus-visible {
     max-height: 250px;
   }
 
+  .modal-product-media {
+    min-height: 0;
+  }
+
   .modal-product-info {
     padding: 22px;
   }
@@ -4080,6 +4177,7 @@ select:focus-visible {
 
 @media (max-width: 760px) {
   .product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px 10px;
   }
 

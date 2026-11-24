@@ -56,6 +56,17 @@
   gap: 5px;
 }
 
+.super-admin-confirm-actions input {
+  min-width: 135px;
+  min-height: 32px;
+  border: 1px solid #d5dfe9;
+  border-radius: 7px;
+  background: #fff;
+  color: #29394b;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
 .super-admin-row-action {
   display: inline-flex;
   min-height: 32px;
@@ -1082,6 +1093,22 @@
 .super-admin-status.is-pending {
   background: #fff4df;
   color: #a86e1d;
+}
+
+.super-admin-status.is-requested {
+  background: #fff4df;
+  color: #a86e1d;
+}
+
+.super-admin-status.is-paid,
+.super-admin-status.is-approved {
+  background: #e7f4ec;
+  color: #26734f;
+}
+
+.super-admin-status.is-rejected {
+  background: #fbecee;
+  color: #a64b51;
 }
 
 .super-admin-status.is-confirmed {

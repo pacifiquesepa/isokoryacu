@@ -1,8 +1,9 @@
 import "server-only";
 
-import { OrderStatus, Prisma, ProductCategory, UserRole } from "@prisma/client";
+import { OrderStatus, Prisma, UserRole } from "@prisma/client";
 import { requireSuperAdminPageUser } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
+import { productSpecificationSchema } from "@/lib/validation/products";
 
 export type SuperAdminRecordKind = "users" | "products" | "orders";
 
@@ -30,6 +31,7 @@ export type SuperAdminRecordList = {
   page: number;
   pageSize: number;
   summary: { label: string; value: number; href: string }[];
+  categories?: { slug: string; name: string }[];
 };
 
 export type SuperAdminRecordDetail = {
@@ -45,16 +47,18 @@ export const DEFAULT_SUPER_ADMIN_RECORD_PAGE_SIZE = 20;
 
 export async function getSuperAdminProductCategoryCounts() {
   await requireSuperAdminPageUser("/super-admin/products/categories");
-  const groups = await prisma.product.groupBy({
-    by: ["category"],
-    _count: { category: true },
+  const categories = await prisma.productCategoryCatalog.findMany({
+    select: {
+      slug: true,
+      name: true,
+      _count: { select: { products: true } },
+    },
+    orderBy: { name: "asc" },
   });
-  const countByCategory = new Map(
-    groups.map((group) => [group.category, group._count.category ?? 0]),
-  );
-  return Object.values(ProductCategory).map((category) => ({
-    category,
-    count: countByCategory.get(category) ?? 0,
+  return categories.map((category) => ({
+    category: category.slug,
+    name: category.name,
+    count: category._count.products,
   }));
 }
 
@@ -103,7 +107,7 @@ function getUserFilter(path: string[], search: string) {
 function getProductFilter(
   path: string[],
   search: string,
-  category?: ProductCategory,
+  category?: string,
 ) {
   const [, view] = path;
   const isPublished =
@@ -196,7 +200,7 @@ export async function getSuperAdminRecordList(
   search: string,
   requestedPage: number,
   title: string,
-  category?: ProductCategory,
+  category?: string,
   requestedPageSize = DEFAULT_SUPER_ADMIN_RECORD_PAGE_SIZE,
 ): Promise<SuperAdminRecordList | null> {
   await requireSuperAdminPageUser(`/super-admin/${path.join("/")}`);
@@ -372,6 +376,7 @@ export async function getSuperAdminRecordList(
       publishedProducts,
       draftProducts,
       outOfStockProducts,
+      categories,
     ] = await prisma.$transaction([
       prisma.product.findMany({
         where,
@@ -381,6 +386,7 @@ export async function getSuperAdminRecordList(
           image: true,
           seller: true,
           category: true,
+          categoryInfo: { select: { name: true } },
           price: true,
           stockQuantity: true,
           isPublished: true,
@@ -395,6 +401,10 @@ export async function getSuperAdminRecordList(
       prisma.product.count({ where: { isPublished: true } }),
       prisma.product.count({ where: { isPublished: false } }),
       prisma.product.count({ where: { stockQuantity: 0 } }),
+      prisma.productCategoryCatalog.findMany({
+        select: { slug: true, name: true },
+        orderBy: { name: "asc" },
+      }),
     ]);
 
     return {
@@ -403,7 +413,7 @@ export async function getSuperAdminRecordList(
       rows: rows.map((product) => ({
         id: product.id,
         name: product.name,
-        summary: `${product.seller} · ${product.category}`,
+        summary: `${product.seller} · ${product.categoryInfo.name}`,
         status: product.isPublished ? "Published" : "Unpublished",
         createdAt: product.createdAt,
         image: product.image,
@@ -420,6 +430,7 @@ export async function getSuperAdminRecordList(
         { label: "Unpublished", value: draftProducts, href: "/super-admin/products/draft-products" },
         { label: "Out of stock", value: outOfStockProducts, href: "/super-admin/products/out-of-stock" },
       ],
+      categories,
     };
   }
 
@@ -497,10 +508,6 @@ function displayDate(date: Date) {
     timeStyle: "short",
     timeZone: "UTC",
   }).format(date);
-}
-
-function productCategoryLabel(category: ProductCategory) {
-  return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
 export async function getSuperAdminRecordDetails(
@@ -582,10 +589,18 @@ export async function getSuperAdminRecordDetails(
       where: { id },
       select: {
         id: true,
+        sku: true,
+        brand: true,
         name: true,
         nameRw: true,
         nameFr: true,
+        description: true,
+        warranty: true,
+        specifications: true,
+        returnPolicy: true,
         category: true,
+        categoryInfo: { select: { name: true } },
+        subcategory: { select: { name: true } },
         price: true,
         previousPrice: true,
         rating: true,
@@ -596,21 +611,39 @@ export async function getSuperAdminRecordDetails(
         location: true,
         stockQuantity: true,
         isPublished: true,
+        moderationStatus: true,
+        scheduledAt: true,
         createdAt: true,
         updatedAt: true,
       },
     });
     if (!product) return null;
+    const specifications =
+      product.specifications === null
+        ? null
+        : productSpecificationSchema.parse(product.specifications);
     return {
       kind: "products",
       id: product.id,
       title: product.name,
-      subtitle: `${product.seller} · ${productCategoryLabel(product.category)}`,
+      subtitle: `${product.seller} · ${product.categoryInfo.name}`,
       fields: [
+        { label: "SKU", value: product.sku ?? "Not provided" },
+        { label: "Brand", value: product.brand ?? "Not provided" },
         { label: "Product name", value: product.name },
         { label: "Kinyarwanda name", value: product.nameRw ?? "Not provided" },
         { label: "French name", value: product.nameFr ?? "Not provided" },
-        { label: "Category", value: productCategoryLabel(product.category) },
+        { label: "Category", value: product.categoryInfo.name },
+        { label: "Subcategory", value: product.subcategory?.name ?? "Not provided" },
+        { label: "Description", value: product.description ?? "Not provided" },
+        { label: "Warranty", value: product.warranty ?? "Not provided" },
+        {
+          label: "Specifications",
+          value: specifications?.length
+            ? specifications.map(({ name, value }) => `${name}: ${value}`).join("; ")
+            : "Not provided",
+        },
+        { label: "Return policy", value: product.returnPolicy ?? "Not provided" },
         { label: "Price", value: `${product.price.toLocaleString("en-RW")} RWF` },
         {
           label: "Previous price",
@@ -621,7 +654,21 @@ export async function getSuperAdminRecordDetails(
         { label: "Seller", value: product.seller },
         { label: "Location", value: product.location },
         { label: "Stock", value: String(product.stockQuantity) },
-        { label: "Publication status", value: product.isPublished ? "Published" : "Unpublished" },
+        {
+          label: "Publication status",
+          value: product.isPublished
+            ? "Published"
+            : product.moderationStatus === "pending"
+              ? "Pending review"
+              : product.moderationStatus === "scheduled"
+                ? "Scheduled"
+                : product.moderationStatus === "rejected"
+                  ? "Rejected"
+                  : product.moderationStatus === "hidden"
+                    ? "Hidden"
+                    : "Draft",
+        },
+        { label: "Scheduled at", value: product.scheduledAt ? displayDate(product.scheduledAt) : "Not scheduled" },
         { label: "Rating", value: `${product.rating} (${product.reviewCount} reviews)` },
         { label: "Badge", value: product.badge ?? "None" },
         { label: "Image URL", value: product.image },
@@ -637,6 +684,14 @@ export async function getSuperAdminRecordDetails(
       select: {
         id: true,
         status: true,
+        fulfillmentMethod: true,
+        paymentMode: true,
+        cashCollectedAt: true,
+        cashCollectionReference: true,
+        deliveryZone: true,
+        deliveryFee: true,
+        deliveryEta: true,
+        pickupLocation: true,
         deliveryName: true,
         deliveryPhone: true,
         deliveryAddress: true,
@@ -693,11 +748,48 @@ export async function getSuperAdminRecordDetails(
     const fields = [
       { label: "Order ID", value: order.id },
       { label: "Status", value: order.status },
+      {
+        label: "Payment method",
+        value: order.paymentMode ?? "Not specified",
+      },
+      {
+        label: "Cash collection",
+        value: order.cashCollectedAt
+          ? displayDate(order.cashCollectedAt)
+          : "Not recorded",
+      },
+      ...(order.cashCollectionReference
+        ? [{ label: "Cash collection reference", value: order.cashCollectionReference }]
+        : []),
       { label: "Customer", value: order.customer.name },
       { label: "Customer email", value: order.customer.email },
       { label: "Delivery recipient", value: order.deliveryName },
       { label: "Delivery phone", value: order.deliveryPhone },
-      { label: "Delivery address", value: order.deliveryAddress },
+      {
+        label: order.fulfillmentMethod === "pickup" ? "Pickup location" : "Delivery address",
+        value:
+          order.fulfillmentMethod === "pickup"
+            ? order.pickupLocation ?? "To be confirmed"
+            : order.deliveryAddress,
+      },
+      ...(order.fulfillmentMethod === "delivery"
+        ? [
+            {
+              label: "Delivery area",
+              value:
+                order.deliveryZone === "kigali"
+                  ? "Kigali"
+                  : order.deliveryZone === "international"
+                    ? "Outside Rwanda"
+                    : "Outside Kigali, within Rwanda",
+            },
+            { label: "Estimated delivery", value: order.deliveryEta ?? "To be confirmed" },
+            {
+              label: "Delivery fee",
+              value: `${order.deliveryFee.toLocaleString("en-RW")} ${order.currency}`,
+            },
+          ]
+        : []),
       {
         label: "Items",
         value:
@@ -709,8 +801,12 @@ export async function getSuperAdminRecordDetails(
             .join("\n") || "No items",
       },
       {
-        label: "Subtotal",
+        label: "Items subtotal",
         value: `${order.subtotal.toLocaleString("en-RW")} ${order.currency}`,
+      },
+      {
+        label: "Order total",
+        value: `${(order.subtotal + order.deliveryFee).toLocaleString("en-RW")} ${order.currency}`,
       },
       {
         label: "Shipments",

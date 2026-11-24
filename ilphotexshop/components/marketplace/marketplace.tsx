@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { UserRole } from "@prisma/client";
 import {
   ArrowDownWideNarrow,
@@ -11,14 +12,12 @@ import {
   Check,
   ChevronDown,
   Headphones,
-  Heart,
   MapPin,
   Moon,
   Phone,
   Search,
   ShieldCheck,
   ShoppingBag,
-  Sparkles,
   Store,
   Sun,
   Tag,
@@ -39,9 +38,16 @@ import {
   type CategoryFilter,
   type Language,
 } from "@/lib/marketplace-i18n";
+import {
+  getMarketplaceLanguageSnapshot,
+  getServerMarketplaceLanguageSnapshot,
+  setMarketplaceLanguage,
+  subscribeToMarketplaceLanguage,
+} from "@/lib/marketplace-language";
 
 type MarketplaceProps = {
   products: Product[];
+  categories: { slug: string; name: string }[];
   userRole: UserRole | null;
   announcementSlot?: ReactNode;
   marketing?: {
@@ -82,21 +88,19 @@ function getServerColorModeSnapshot(): ColorMode {
   return "light";
 }
 
-const categories = [
-  { key: "all", message: "categoryAll", icon: Sparkles },
-  { key: "technology", message: "categoryTechnology", icon: Headphones },
-  { key: "fashion", message: "categoryFashion", icon: Heart },
-  { key: "home", message: "categoryHome", icon: ShieldCheck },
-  { key: "beauty", message: "categoryBeauty", icon: Sparkles },
-] as const;
-
 export default function Marketplace({
   products,
+  categories: productCategories,
   userRole,
   announcementSlot,
   marketing,
 }: MarketplaceProps) {
-  const [language, setLanguage] = useState<Language>("en");
+  const router = useRouter();
+  const language = useSyncExternalStore(
+    subscribeToMarketplaceLanguage,
+    getMarketplaceLanguageSnapshot,
+    getServerMarketplaceLanguageSnapshot,
+  );
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [sortOrder, setSortOrder] = useState("recommended");
@@ -113,7 +117,37 @@ export default function Marketplace({
   const [cartAdjusted, setCartAdjusted] = useState(false);
   const [cartStorageFailed, setCartStorageFailed] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
+  const defaultCategoryMessages: Partial<
+    Record<string, Parameters<typeof translate>[1]>
+  > = {
+    technology: "categoryTechnology",
+    fashion: "categoryFashion",
+    home: "categoryHome",
+    beauty: "categoryBeauty",
+  };
+  const categories = [
+    { key: "all" as const, label: t("categoryAll") },
+    ...productCategories.map(({ slug, name }) => ({
+      key: slug,
+      label: defaultCategoryMessages[slug]
+        ? t(defaultCategoryMessages[slug]!)
+        : name,
+    })),
+  ];
+  const selectedProductImages = selectedProduct
+    ? selectedProduct.images?.length
+      ? [...selectedProduct.images]
+          .sort((left, right) => left.sortOrder - right.sortOrder)
+          .map((image) => `/api/products/images/${image.id}`)
+      : [selectedProduct.image]
+    : [];
+
+  function viewProduct(product: Product) {
+    setSelectedImageIndex(0);
+    setSelectedProduct(product);
+  }
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -275,6 +309,10 @@ export default function Marketplace({
     setCartItems(updater);
   }
 
+  function changeLanguage(nextLanguage: Language) {
+    setMarketplaceLanguage(nextLanguage);
+  }
+
   function addToCart(product: Product) {
     const stockLimit = Math.min(product.stockQuantity ?? 100, 100);
     if (stockLimit < 1) return;
@@ -316,7 +354,7 @@ export default function Marketplace({
         })),
       ),
     );
-    window.location.assign("/checkout");
+    router.push("/checkout");
   }
 
   function changeQuantity(productId: string, change: number) {
@@ -363,7 +401,7 @@ export default function Marketplace({
             </a>
           </div>
           <div className="topbar-right">
-            <LanguageSelector language={language} onChange={setLanguage} />
+            <LanguageSelector language={language} onChange={changeLanguage} />
             <span className="currency-badge" aria-label={t("currency")}>
               RWF
             </span>
@@ -414,7 +452,7 @@ export default function Marketplace({
                 >
                   {categories.map((category) => (
                     <option key={category.key} value={category.key}>
-                      {t(category.message)}
+                      {category.label}
                     </option>
                   ))}
                 </select>
@@ -454,12 +492,12 @@ export default function Marketplace({
               </button>
               <div className="header-actions">
                 {userRole === "customer" ? (
-                  <Link className="account-action" href="/orders">
+                  <Link className="account-action" href="/account">
                     <span className="action-icon" aria-hidden="true">
-                      <ShoppingBag size={17} />
+                      <LayoutGrid size={17} />
                     </span>
                     <span className="action-copy">
-                      <strong>{t("myOrders")}</strong>
+                      <strong>{t("myAccount")}</strong>
                     </span>
                   </Link>
                 ) : userRole === "seller" ? (
@@ -522,7 +560,7 @@ export default function Marketplace({
                 <button
                   className="cart-button"
                   type="button"
-                  onClick={() => window.location.assign("/checkout")}
+                  onClick={() => router.push("/checkout")}
                   aria-label={t("cartAria").replace("{count}", String(cartCount))}
                 >
                   <ShoppingBag size={19} />
@@ -687,7 +725,7 @@ export default function Marketplace({
         </div>
         <div className="product-toolbar" id="ibyiciro">
           <div className="product-filter-row">
-            {categories.map(({ key, message }) => (
+            {categories.map(({ key, label }) => (
               <button
                 className={`filter-chip${activeCategory === key ? " selected" : ""}`}
                 key={key}
@@ -698,7 +736,7 @@ export default function Marketplace({
                 }}
                 aria-pressed={activeCategory === key}
               >
-                {t(message)}
+                {label}
               </button>
             ))}
           </div>
@@ -719,7 +757,7 @@ export default function Marketplace({
                 product={product}
                 onAddToCart={addToCart}
                 onBuyNow={buyNow}
-                onViewProduct={setSelectedProduct}
+                onViewProduct={viewProduct}
               />
             ))}
           </div>
@@ -797,12 +835,10 @@ export default function Marketplace({
         <CartDrawer
           language={language}
           items={cartItems}
-          userRole={userRole}
           cartAdjusted={cartAdjusted}
           cartStorageFailed={cartStorageFailed}
           onClose={() => setIsCartOpen(false)}
           onChangeQuantity={changeQuantity}
-          onOrderPlaced={() => updateCartItems(() => [])}
           onRemove={(productId) =>
             updateCartItems((currentItems) =>
               currentItems.filter((item) => item.product.id !== productId),
@@ -833,12 +869,31 @@ export default function Marketplace({
             >
               <X size={20} />
             </button>
-            <div
-              className="modal-product-image"
-              role="img"
-              aria-label={translateProduct(selectedProduct, language).name}
-              style={{ backgroundImage: `url("${selectedProduct.image}")` }}
-            />
+            <div className="modal-product-media">
+              <div
+                className="modal-product-image"
+                role="img"
+                aria-label={translateProduct(selectedProduct, language).name}
+                style={{
+                  backgroundImage: `url("${selectedProductImages[selectedImageIndex] ?? selectedProduct.image}")`,
+                }}
+              />
+              {selectedProductImages.length > 1 && (
+                <div aria-label={t("productGallery")} className="modal-product-gallery">
+                  {selectedProductImages.map((image, index) => (
+                    <button
+                      aria-label={`${t("productGallery")} ${index + 1}`}
+                      aria-pressed={selectedImageIndex === index}
+                      className={selectedImageIndex === index ? "is-selected" : ""}
+                      key={image}
+                      onClick={() => setSelectedImageIndex(index)}
+                      style={{ backgroundImage: `url("${image}")` }}
+                      type="button"
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="modal-product-info">
               <p className="eyebrow">
                 {translateProduct(selectedProduct, language).category}
@@ -862,7 +917,52 @@ export default function Marketplace({
               <strong className="modal-price">
                 {formatMoney(selectedProduct.price, language)}
               </strong>
-              <p className="modal-description">{t("productDescription")}</p>
+              {selectedProduct.commissionAmount ? (
+                <small className="product-fee-note">
+                  Platform fee included · {formatMoney(selectedProduct.commissionAmount, language)}
+                </small>
+              ) : null}
+              <p className="modal-description">
+                {selectedProduct.description || t("productDescription")}
+              </p>
+              {(selectedProduct.brand || selectedProduct.sku) && (
+                <dl className="modal-product-meta">
+                  {selectedProduct.brand && (
+                    <div><dt>{t("productBrand")}</dt><dd>{selectedProduct.brand}</dd></div>
+                  )}
+                  {selectedProduct.sku && (
+                    <div><dt>{t("productSku")}</dt><dd>{selectedProduct.sku}</dd></div>
+                  )}
+                  {selectedProduct.subcategory && (
+                    <div><dt>{t("productSubcategory")}</dt><dd>{selectedProduct.subcategory}</dd></div>
+                  )}
+                </dl>
+              )}
+              {selectedProduct.specifications?.length ? (
+                <section className="modal-product-extra">
+                  <h3>{t("productSpecifications")}</h3>
+                  <dl>
+                    {selectedProduct.specifications.map((specification) => (
+                      <div key={`${specification.name}-${specification.value}`}>
+                        <dt>{specification.name}</dt>
+                        <dd>{specification.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ) : null}
+              {selectedProduct.warranty && (
+                <section className="modal-product-extra">
+                  <h3>{t("productWarranty")}</h3>
+                  <p>{selectedProduct.warranty}</p>
+                </section>
+              )}
+              {selectedProduct.returnPolicy && (
+                <section className="modal-product-extra">
+                  <h3>{t("productReturnPolicy")}</h3>
+                  <p>{selectedProduct.returnPolicy}</p>
+                </section>
+              )}
               <button
                 className="button button-primary modal-add-button"
                 type="button"

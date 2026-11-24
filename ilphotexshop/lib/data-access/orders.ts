@@ -7,6 +7,14 @@ import {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { defaultDeliverySettings } from "@/lib/data-access/delivery-settings";
+import { enqueueOrderNotifications } from "@/lib/data-access/order-notifications";
+import { getCommissionBreakdown } from "@/lib/commerce/pricing";
+import {
+  InsufficientProductStockError,
+  recordOrderSale,
+  reverseOrderSale,
+} from "@/lib/data-access/inventory";
 import type {
   CreateOrderInput,
   ListOrdersQuery,
@@ -26,6 +34,13 @@ const orderItemFields = {
 const customerOrderFields = {
   id: true,
   status: true,
+  fulfillmentMethod: true,
+  paymentMode: true,
+  cashCollectedAt: true,
+  deliveryZone: true,
+  deliveryFee: true,
+  deliveryEta: true,
+  pickupLocation: true,
   deliveryName: true,
   deliveryPhone: true,
   deliveryAddress: true,
@@ -51,6 +66,33 @@ const customerOrderFields = {
       reviewedAt: true,
     },
     orderBy: { createdAt: "desc" as const },
+  },
+} as const;
+
+const customerOrderDetailFields = {
+  ...customerOrderFields,
+  shipments: {
+    select: {
+      id: true,
+      carrier: true,
+      trackingNumber: true,
+      status: true,
+      shippedAt: true,
+      deliveredAt: true,
+      notes: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" as const },
+  },
+  notifications: {
+    where: { channel: "in_app" as const },
+    select: {
+      id: true,
+      title: true,
+      body: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "asc" as const },
   },
 } as const;
 
@@ -121,6 +163,13 @@ export class OrderPaymentProofConflictError extends OrderStatusConflictError {
   }
 }
 
+export class CashCollectionConflictError extends Error {
+  constructor() {
+    super("Cash collection can only be recorded once for an active cash-on-delivery order");
+    this.name = "CashCollectionConflictError";
+  }
+}
+
 function isPrismaError(
   error: unknown,
   code: "P2002" | "P2034",
@@ -153,20 +202,6 @@ async function findExistingOrder(
   }
 
   return { order, replayed: true };
-}
-
-async function restockOrderItems(
-  transaction: Prisma.TransactionClient,
-  items: { productId: string | null; quantity: number }[],
-) {
-  for (const item of items) {
-    if (!item.productId) continue;
-
-    await transaction.product.updateMany({
-      where: { id: item.productId },
-      data: { stockQuantity: { increment: item.quantity } },
-    });
-  }
 }
 
 export async function createCustomerOrder(
@@ -213,6 +248,8 @@ export async function createCustomerOrder(
             price: true,
             stockQuantity: true,
             updatedAt: true,
+            categoryInfo: { select: { commissionBasisPoints: true } },
+            subcategory: { select: { commissionBasisPoints: true } },
           },
         });
         if (products.length !== input.items.length) {
@@ -220,14 +257,56 @@ export async function createCustomerOrder(
         }
 
         const productsById = new Map(products.map((product) => [product.id, product]));
+        const pricingByProduct = new Map(
+          products.map((product) => [
+            product.id,
+            getCommissionBreakdown(
+              product.price,
+              product.categoryInfo.commissionBasisPoints,
+              product.subcategory?.commissionBasisPoints ?? null,
+            ),
+          ]),
+        );
         const subtotal = input.items.reduce((total, item) => {
           const product = productsById.get(item.productId);
           if (!product || product.stockQuantity < item.quantity) {
             throw new OrderInventoryUnavailableError();
           }
-          return total + product.price * item.quantity;
+          const pricing = pricingByProduct.get(product.id);
+          if (!pricing) throw new OrderInventoryUnavailableError();
+          return total + pricing.customerPrice * item.quantity;
         }, 0);
         if (!Number.isSafeInteger(subtotal) || subtotal > maxOrderSubtotal) {
+          throw new OrderSubtotalTooLargeError();
+        }
+        const deliverySettings =
+          input.fulfillmentMethod === "delivery"
+            ? await transaction.deliverySettings.findUnique({
+                where: { id: "default" },
+                select: {
+                  deliveryFeeRwf: true,
+                  etaKigali: true,
+                  etaOutsideKigali: true,
+                  etaInternational: true,
+                },
+              })
+            : null;
+        const deliveryFee =
+          input.fulfillmentMethod === "delivery"
+            ? deliverySettings?.deliveryFeeRwf ??
+              defaultDeliverySettings.deliveryFeeRwf
+            : 0;
+        const deliveryEta =
+          input.fulfillmentMethod === "delivery"
+            ? input.deliveryZone === "kigali"
+              ? deliverySettings?.etaKigali ?? defaultDeliverySettings.etaKigali
+              : input.deliveryZone === "international"
+                ? deliverySettings?.etaInternational ??
+                  defaultDeliverySettings.etaInternational
+                : deliverySettings?.etaOutsideKigali ??
+                  defaultDeliverySettings.etaOutsideKigali
+            : null;
+        if (subtotal + deliveryFee > maxOrderSubtotal) {
           throw new OrderSubtotalTooLargeError();
         }
 
@@ -289,6 +368,13 @@ export async function createCustomerOrder(
             idempotencyKey,
             requestHash,
             fulfillmentMethod: input.fulfillmentMethod,
+            paymentMode: input.paymentMode,
+            deliveryZone: input.deliveryZone ?? null,
+            deliveryFee,
+            deliveryEta,
+            notifyByEmail: input.notifyByEmail,
+            notifyByWhatsapp: input.notifyByWhatsapp,
+            notificationLanguage: input.notificationLanguage,
             pickupLocation: input.pickupLocation ?? null,
             deliveryLatitude: input.deliveryLatitude ?? null,
             deliveryLongitude: input.deliveryLongitude ?? null,
@@ -300,6 +386,8 @@ export async function createCustomerOrder(
               create: input.items.map((item) => {
                 const product = productsById.get(item.productId);
                 if (!product) throw new OrderInventoryUnavailableError();
+                const pricing = pricingByProduct.get(product.id);
+                if (!pricing) throw new OrderInventoryUnavailableError();
 
                 return {
                   productId: product.id,
@@ -307,9 +395,14 @@ export async function createCustomerOrder(
                   productName: product.name,
                   productImage: product.image,
                   sellerName: product.seller,
-                  unitPrice: product.price,
+                  unitPrice: pricing.customerPrice,
                   quantity: item.quantity,
-                  lineTotal: product.price * item.quantity,
+                  lineTotal: pricing.customerPrice * item.quantity,
+                  merchantUnitPrice: pricing.basePrice,
+                  platformCommissionUnit: pricing.commissionAmount,
+                  merchantLineTotal: pricing.basePrice * item.quantity,
+                  platformCommissionTotal:
+                    pricing.commissionAmount * item.quantity,
                 };
               }),
             },
@@ -327,6 +420,7 @@ export async function createCustomerOrder(
             },
           });
         }
+        await enqueueOrderNotifications(transaction, createdOrder.id, "placed");
         return { order: createdOrder, replayed: false };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -376,10 +470,100 @@ export async function getCustomerOrders(
   return { orders, total };
 }
 
+export async function getCustomerDashboardSummary(customerId: string) {
+  const monthRangeStart = new Date();
+  monthRangeStart.setUTCDate(1);
+  monthRangeStart.setUTCHours(0, 0, 0, 0);
+  monthRangeStart.setUTCMonth(monthRangeStart.getUTCMonth() - 5);
+  const [statusCounts, receiptsInReview, recentOrders, monthlyOrders] =
+    await prisma.$transaction([
+    prisma.order.groupBy({
+      by: ["status"],
+      where: { customerId },
+      orderBy: { status: "asc" },
+      _count: { _all: true },
+    }),
+    prisma.orderPaymentProof.count({
+      where: {
+        customerId,
+        status: OrderPaymentProofStatus.pending,
+      },
+    }),
+    prisma.order.findMany({
+      where: { customerId },
+      select: {
+        id: true,
+        status: true,
+        fulfillmentMethod: true,
+        subtotal: true,
+        deliveryFee: true,
+        currency: true,
+        createdAt: true,
+        items: {
+          select: { id: true, productName: true, quantity: true },
+          orderBy: { createdAt: "asc" },
+          take: 2,
+        },
+        _count: { select: { items: true } },
+        paymentProofs: {
+          select: { status: true },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+    prisma.$queryRaw<{ month: string; count: number }[]>(
+      Prisma.sql`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', "createdAt"), 'YYYY-MM') AS "month",
+          COUNT(*)::int AS "count"
+        FROM "Order"
+        WHERE "customerId" = ${customerId}
+          AND "createdAt" >= ${monthRangeStart}
+        GROUP BY DATE_TRUNC('month', "createdAt")
+        ORDER BY DATE_TRUNC('month', "createdAt") ASC
+      `,
+    ),
+  ]);
+  const countForEntry = (entry: (typeof statusCounts)[number]) =>
+    typeof entry._count === "object" && entry._count !== null
+      ? entry._count._all ?? 0
+      : 0;
+  const countForStatus = (status: OrderStatus) => {
+    const entry = statusCounts.find((item) => item.status === status);
+    return entry ? countForEntry(entry) : 0;
+  };
+
+  return {
+    totalOrders: statusCounts.reduce(
+      (sum, entry) => sum + countForEntry(entry),
+      0,
+    ),
+    inProgressOrders: [
+      OrderStatus.pending,
+      OrderStatus.confirmed,
+      OrderStatus.processing,
+      OrderStatus.shipped,
+    ].reduce((sum, status) => sum + countForStatus(status), 0),
+    completedOrders:
+      countForStatus(OrderStatus.delivered) +
+      countForStatus(OrderStatus.fulfilled),
+    receiptsInReview,
+    statusBreakdown: statusCounts.map((entry) => ({
+      status: entry.status,
+      count: countForEntry(entry),
+    })),
+    monthlyOrders,
+    recentOrders,
+  };
+}
+
 export async function getCustomerOrder(customerId: string, id: string) {
   return prisma.order.findFirst({
     where: { id, customerId },
-    select: customerOrderFields,
+    select: customerOrderDetailFields,
   });
 }
 
@@ -405,7 +589,9 @@ export async function cancelCustomerOrder(customerId: string, id: string) {
             status: true,
             items: {
               select: {
+                id: true,
                 productId: true,
+                productName: true,
                 quantity: true,
               },
             },
@@ -434,7 +620,8 @@ export async function cancelCustomerOrder(customerId: string, id: string) {
         });
         if (updated.count !== 1) throw new OrderStatusConflictError();
 
-        await restockOrderItems(transaction, order.items);
+        await reverseOrderSale(transaction, id, order.items, customerId);
+        await enqueueOrderNotifications(transaction, id, OrderStatus.cancelled);
         return transaction.order.findUnique({
           where: { id },
           select: customerOrderFields,
@@ -468,6 +655,7 @@ export async function getAdminOrders(query: ListOrdersQuery) {
 export async function updateOrderStatusAsAdmin(
   id: string,
   nextStatus: OrderStatus,
+  actorId?: string,
 ) {
   try {
     return await prisma.$transaction(
@@ -490,7 +678,9 @@ export async function updateOrderStatusAsAdmin(
             status: true,
             items: {
               select: {
+                id: true,
                 productId: true,
+                productName: true,
                 quantity: true,
               },
             },
@@ -503,6 +693,7 @@ export async function updateOrderStatusAsAdmin(
             select: adminOrderFields,
           });
         }
+
         if (nextStatus === OrderStatus.cancelled) {
           const approvedPayment = await transaction.orderPaymentProof.findFirst({
             where: {
@@ -532,6 +723,7 @@ export async function updateOrderStatusAsAdmin(
             );
           }
         }
+
         if (!allowedTransitions[orderState.status].includes(nextStatus)) {
           throw new OrderStatusConflictError();
         }
@@ -544,19 +736,13 @@ export async function updateOrderStatusAsAdmin(
             select: { id: true },
           });
           if (!approvedPaymentProof) {
-            for (const item of order.items) {
-              if (!item.productId) continue;
-              const stockUpdate = await transaction.product.updateMany({
-                where: {
-                  id: item.productId,
-                  isPublished: true,
-                  stockQuantity: { gte: item.quantity },
-                },
-                data: { stockQuantity: { decrement: item.quantity } },
-              });
-              if (stockUpdate.count !== 1) {
+            try {
+              await recordOrderSale(transaction, id, order.items, actorId ?? null);
+            } catch (error) {
+              if (error instanceof InsufficientProductStockError) {
                 throw new OrderStatusConflictError();
               }
+              throw error;
             }
           }
         }
@@ -568,9 +754,10 @@ export async function updateOrderStatusAsAdmin(
         if (updated.count !== 1) throw new OrderStatusConflictError();
 
         if (nextStatus === OrderStatus.cancelled) {
-          await restockOrderItems(transaction, order.items);
+          await reverseOrderSale(transaction, id, order.items, actorId ?? null);
         }
 
+        await enqueueOrderNotifications(transaction, id, nextStatus);
         return transaction.order.findUnique({
           where: { id },
           select: adminOrderFields,
@@ -584,4 +771,50 @@ export async function updateOrderStatusAsAdmin(
     }
     throw error;
   }
+}
+
+export async function recordOrderCashCollection(
+  orderId: string,
+  actorId: string,
+  reference?: string,
+) {
+  return prisma.$transaction(async (transaction) => {
+    const orders = await transaction.$queryRaw<
+      {
+        paymentMode: "receipt" | "cash_on_delivery" | null;
+        status: OrderStatus;
+        cashCollectedAt: Date | null;
+      }[]
+    >(
+      Prisma.sql`
+        SELECT "paymentMode", "status", "cashCollectedAt"
+        FROM "Order"
+        WHERE "id" = ${orderId}
+        FOR UPDATE
+      `,
+    );
+    const order = orders[0];
+    if (!order) return null;
+    if (
+      order.paymentMode !== "cash_on_delivery" ||
+      order.status === OrderStatus.cancelled ||
+      order.cashCollectedAt
+    ) {
+      throw new CashCollectionConflictError();
+    }
+    return transaction.order.update({
+      where: { id: orderId },
+      data: {
+        cashCollectedAt: new Date(),
+        cashCollectedById: actorId,
+        cashCollectionReference: reference ?? null,
+      },
+      select: {
+        id: true,
+        paymentMode: true,
+        cashCollectedAt: true,
+        cashCollectionReference: true,
+      },
+    });
+  });
 }

@@ -57,7 +57,11 @@ export type MerchantKycAuditDetail = {
   applicationId: string;
   actorName: string;
   actorEmail: string;
-  action: "approved" | "rejected" | "erased";
+  action:
+    | "approved"
+    | "rejected"
+    | "erased"
+    | "reverification_requested";
   reason: string | null;
   createdAt: Date;
 };

@@ -26,6 +26,14 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
   minute: "2-digit",
   timeZone: "UTC",
 });
+const orderProgress = [
+  { status: "pending", label: "Order placed" },
+  { status: "confirmed", label: "Confirmed" },
+  { status: "processing", label: "Being prepared" },
+  { status: "shipped", label: "Shipped" },
+  { status: "delivered", label: "Delivered" },
+  { status: "fulfilled", label: "Complete" },
+] as const;
 
 export default function CustomerOrderDetailPage({
   params,
@@ -61,16 +69,52 @@ async function CustomerOrderDetailContent({
     : [];
 
   const title = `Order ${order.id.slice(-8).toUpperCase()}`;
+  const currentProgressIndex = orderProgress.findIndex(
+    (step) => step.status === order.status,
+  );
+  const deliveryZoneLabel =
+    order.deliveryZone === "kigali"
+      ? "Kigali"
+      : order.deliveryZone === "international"
+        ? "Outside Rwanda"
+        : "Outside Kigali, within Rwanda";
+  const orderTotal = order.subtotal + order.deliveryFee;
   const fields = [
     { label: "Order ID", value: order.id },
     { label: "Status", value: order.status },
+    {
+      label: "Fulfillment",
+      value: order.fulfillmentMethod === "pickup" ? "Pickup" : "Delivery",
+    },
+    ...(order.fulfillmentMethod === "delivery"
+      ? [
+          { label: "Delivery area", value: deliveryZoneLabel },
+          {
+            label: "Estimated delivery",
+            value: order.deliveryEta ?? "To be confirmed",
+          },
+          {
+            label: "Delivery fee",
+            value: `${numberFormat.format(order.deliveryFee)} ${order.currency}`,
+          },
+        ]
+      : []),
     { label: "Placed", value: dateFormat.format(order.createdAt) },
     { label: "Delivery recipient", value: order.deliveryName },
     { label: "Delivery phone", value: order.deliveryPhone },
-    { label: "Delivery address", value: order.deliveryAddress },
+    {
+      label: order.fulfillmentMethod === "pickup" ? "Pickup details" : "Delivery address",
+      value: order.fulfillmentMethod === "pickup"
+        ? order.pickupLocation ?? "To be confirmed"
+        : order.deliveryAddress,
+    },
     {
       label: "Items subtotal",
       value: `${numberFormat.format(order.subtotal)} ${order.currency}`,
+    },
+    {
+      label: "Order total",
+      value: `${numberFormat.format(orderTotal)} ${order.currency}`,
     },
     ...order.items.map((item, index) => ({
       label: `Item ${index + 1}`,
@@ -92,6 +136,43 @@ async function CustomerOrderDetailContent({
           {order.status}
         </span>
       </div>
+
+      {order.status === "cancelled" ? (
+        <div className="customer-order-cancelled-banner" role="status">
+          This order was cancelled. Contact support if you need help with
+          payment or next steps.
+        </div>
+      ) : (
+        <section
+          aria-label="Order progress"
+          className="customer-order-progress"
+        >
+          <div className="customer-order-section-heading">
+            <div>
+              <h2>Order progress</h2>
+              <p>Follow your order from placement to delivery.</p>
+            </div>
+          </div>
+          <ol>
+            {orderProgress.map((step, index) => {
+              const stepState =
+                index < currentProgressIndex
+                  ? "complete"
+                  : index === currentProgressIndex
+                    ? "current"
+                    : "upcoming";
+              return (
+                <li className={`is-${stepState}`} key={step.status}>
+                  <span aria-hidden="true">
+                    {stepState === "complete" ? "✓" : index + 1}
+                  </span>
+                  <strong>{step.label}</strong>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      )}
 
       <article className="customer-order-record">
         <header className="customer-order-brand">
@@ -141,23 +222,114 @@ async function CustomerOrderDetailContent({
                   <th colSpan={4} scope="row">Items subtotal</th>
                   <td>{numberFormat.format(order.subtotal)} {order.currency}</td>
                 </tr>
+                <tr>
+                  <th colSpan={4} scope="row">Delivery fee</th>
+                  <td>{numberFormat.format(order.deliveryFee)} {order.currency}</td>
+                </tr>
+                <tr>
+                  <th colSpan={4} scope="row">Order total</th>
+                  <td>{numberFormat.format(orderTotal)} {order.currency}</td>
+                </tr>
               </tfoot>
             </table>
           </div>
         </section>
 
         <section className="customer-order-delivery">
-          <h2>Delivery details</h2>
+          <h2>{order.fulfillmentMethod === "pickup" ? "Pickup details" : "Delivery details"}</h2>
           <dl>
             <div><dt>Recipient</dt><dd>{order.deliveryName}</dd></div>
             <div><dt>Phone</dt><dd>{order.deliveryPhone}</dd></div>
-            <div><dt>Address</dt><dd>{order.deliveryAddress}</dd></div>
+            {order.fulfillmentMethod === "delivery" ? (
+              <>
+                <div><dt>Area</dt><dd>{deliveryZoneLabel}</dd></div>
+                <div><dt>Address</dt><dd>{order.deliveryAddress}</dd></div>
+                <div><dt>Estimated delivery</dt><dd>{order.deliveryEta ?? "To be confirmed"}</dd></div>
+                <div><dt>Delivery fee</dt><dd>{numberFormat.format(order.deliveryFee)} {order.currency}</dd></div>
+              </>
+            ) : (
+              <div><dt>Pickup location</dt><dd>{order.pickupLocation ?? "To be confirmed"}</dd></div>
+            )}
           </dl>
         </section>
 
+        {order.shipments.length > 0 && (
+          <section className="customer-order-tracking">
+            <div className="customer-order-section-heading">
+              <div>
+                <h2>Shipment tracking</h2>
+                <p>Latest delivery information for this order.</p>
+              </div>
+            </div>
+            <div className="customer-order-tracking-list">
+              {order.shipments.map((shipment) => (
+                <article key={shipment.id}>
+                  <div className="customer-order-tracking-status">
+                    <span className="customer-order-tracking-icon">
+                      <Package aria-hidden="true" size={18} />
+                    </span>
+                    <div>
+                      <strong>{shipment.status}</strong>
+                      <span>{shipment.carrier}</span>
+                    </div>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Tracking number</dt>
+                      <dd><code>{shipment.trackingNumber}</code></dd>
+                    </div>
+                    {shipment.shippedAt && (
+                      <div>
+                        <dt>Shipped</dt>
+                        <dd>{dateFormat.format(shipment.shippedAt)} UTC</dd>
+                      </div>
+                    )}
+                    {shipment.deliveredAt && (
+                      <div>
+                        <dt>Delivered</dt>
+                        <dd>{dateFormat.format(shipment.deliveredAt)} UTC</dd>
+                      </div>
+                    )}
+                    {shipment.notes && (
+                      <div>
+                        <dt>Update</dt>
+                        <dd>{shipment.notes}</dd>
+                      </div>
+                    )}
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className="customer-order-payment-history">
+          <div className="customer-order-section-heading">
+            <div>
+              <h2>Order updates</h2>
+              <p>{order.notifications.length} updates</p>
+            </div>
+          </div>
+          {order.notifications.length ? (
+            <ul>
+              {order.notifications.map((notification) => (
+                <li key={notification.id}>
+                  <div>
+                    <strong>{notification.title}</strong>
+                    <span>{notification.body}</span>
+                    <span>{dateFormat.format(notification.createdAt)} UTC</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No order updates yet.</p>
+          )}
+        </section>
+
         <div className="customer-order-payment-note">
-          Payment proof review does not automatically confirm the order. The order
-          remains pending until an administrator confirms it.
+          For bank and mobile money payments, submitting a receipt does not
+          automatically confirm the order. An administrator must review it.
         </div>
 
         <section className="customer-order-payment-history">

@@ -32,9 +32,27 @@ export async function getAccountSecuritySessions(userId: string) {
       isRevoked: true,
       expiresAt: true,
       lastSeenAt: true,
+      createdAt: true,
+      revokedAt: true,
     },
     orderBy: [{ lastSeenAt: "desc" }, { id: "desc" }],
     take: 50,
+  });
+}
+
+export async function getAccountSecuritySession(userId: string, sessionId: string) {
+  return prisma.securitySession.findFirst({
+    where: { id: sessionId, userId },
+    select: {
+      id: true,
+      ipAddress: true,
+      deviceName: true,
+      isRevoked: true,
+      expiresAt: true,
+      lastSeenAt: true,
+      createdAt: true,
+      revokedAt: true,
+    },
   });
 }
 

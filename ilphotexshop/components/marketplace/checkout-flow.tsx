@@ -2,7 +2,16 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
 import {
   ArrowLeft,
   Banknote,
@@ -15,9 +24,17 @@ import {
   ReceiptText,
   ShoppingBag,
   Truck,
-  Upload,
 } from "lucide-react";
+import type { UserRole } from "@prisma/client";
 import type { Product } from "@/data/products";
+import LanguageSelector from "@/components/marketplace/language-selector";
+import { checkoutMessage } from "@/lib/checkout-i18n";
+import {
+  getMarketplaceLanguageSnapshot,
+  getServerMarketplaceLanguageSnapshot,
+  setMarketplaceLanguage,
+  subscribeToMarketplaceLanguage,
+} from "@/lib/marketplace-language";
 
 type CheckoutProduct = Product & {
   ownerId?: string | null;
@@ -25,11 +42,8 @@ type CheckoutProduct = Product & {
 };
 
 type CartEntry = { productId: string; quantity: number };
-
-type CheckoutItem = {
-  product: CheckoutProduct;
-  quantity: number;
-};
+type CheckoutItem = { product: CheckoutProduct; quantity: number };
+type DeliveryZone = "kigali" | "outside_kigali" | "international";
 
 type PaymentAccount = {
   id: string;
@@ -40,20 +54,37 @@ type PaymentAccount = {
   currency: string;
 };
 
+type DeliverySettings = {
+  deliveryFeeRwf: number;
+  etaKigali: string;
+  etaOutsideKigali: string;
+  etaInternational: string;
+};
+
 export default function CheckoutFlow({
   accounts,
   customerName,
-  isAuthenticated,
+  userRole,
+  deliverySettings,
 }: {
   accounts: PaymentAccount[];
   customerName: string;
-  isAuthenticated: boolean;
+  userRole: UserRole | null;
+  deliverySettings: DeliverySettings;
 }) {
   const [items, setItems] = useState<CheckoutItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const language = useSyncExternalStore(
+    subscribeToMarketplaceLanguage,
+    getMarketplaceLanguageSnapshot,
+    getServerMarketplaceLanguageSnapshot,
+  );
   const [fulfillment, setFulfillment] = useState<"delivery" | "pickup">("delivery");
+  const [deliveryZone, setDeliveryZone] = useState<DeliveryZone>("kigali");
   const [fulfillmentComplete, setFulfillmentComplete] = useState(false);
-  const [paymentChoice, setPaymentChoice] = useState<"receipt" | "system" | "cod">("receipt");
+  const [paymentChoice, setPaymentChoice] = useState<"receipt" | "cod">(
+    accounts.length ? "receipt" : "cod",
+  );
   const [paymentMethod, setPaymentMethod] = useState<"bank_transfer" | "mobile_money">(
     accounts.some((account) => account.type === "mobile_money")
       ? "mobile_money"
@@ -63,16 +94,29 @@ export default function CheckoutFlow({
   const [error, setError] = useState("");
   const [orderId, setOrderId] = useState("");
   const [receiptSubmitted, setReceiptSubmitted] = useState(false);
+  const [receiptError, setReceiptError] = useState(false);
+  const [notificationWarning, setNotificationWarning] = useState(false);
   const [merchantMessage, setMerchantMessage] = useState("");
   const [merchantSubject, setMerchantSubject] = useState("");
   const [merchantNotice, setMerchantNotice] = useState("");
+  const idempotencyRequest = useRef<{ fingerprint: string; key: string } | null>(
+    null,
+  );
+  const isCustomer = userRole === "customer";
+  const router = useRouter();
+  const t = (key: Parameters<typeof checkoutMessage>[1]) =>
+    checkoutMessage(language, key);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   useEffect(() => {
     let active = true;
     async function loadCart() {
       try {
         const saved = localStorage.getItem("ilphotox-cart");
-        const entries = saved ? JSON.parse(saved) : [];
+        const entries: unknown = saved ? JSON.parse(saved) : [];
         if (!Array.isArray(entries)) throw new Error("Invalid cart");
         const validEntries = entries.filter(
           (entry): entry is CartEntry =>
@@ -106,6 +150,7 @@ export default function CheckoutFlow({
         );
       } catch (caught) {
         if (active) {
+          console.error("Could not load the checkout cart", caught);
           setError(
             caught instanceof Error
               ? caught.message
@@ -130,6 +175,19 @@ export default function CheckoutFlow({
       ),
     [items],
   );
+  const deliveryFee =
+    fulfillment === "delivery" ? deliverySettings.deliveryFeeRwf : 0;
+  const total = subtotal + deliveryFee;
+  const estimatedDelivery =
+    deliveryZone === "kigali"
+      ? deliverySettings.etaKigali
+      : deliveryZone === "international"
+        ? deliverySettings.etaInternational
+        : deliverySettings.etaOutsideKigali;
+  const numberLocale =
+    language === "fr" ? "fr-RW" : language === "rw" ? "rw-RW" : "en-RW";
+  const formatMoney = (amount: number) =>
+    `${new Intl.NumberFormat(numberLocale).format(amount)} RWF`;
 
   function completeFulfillment() {
     setError("");
@@ -137,28 +195,28 @@ export default function CheckoutFlow({
     if (!form) return;
     const name = form.elements.namedItem("deliveryName") as HTMLInputElement | null;
     const phone = form.elements.namedItem("deliveryPhone") as HTMLInputElement | null;
-    const deliveryAddress = form.elements.namedItem("deliveryAddress") as HTMLTextAreaElement | null;
+    const address = form.elements.namedItem("deliveryAddress") as HTMLTextAreaElement | null;
     const pickupLocation = form.elements.namedItem("pickupLocation") as HTMLInputElement | null;
 
     if (!name || name.value.trim().length < 2) {
-      setError("Enter the recipient name.");
+      setError(t("invalidName"));
       name?.focus();
       return;
     }
     const phoneDigits = phone?.value.replace(/\D/g, "") ?? "";
     if (!phone || phoneDigits.length < 7 || phoneDigits.length > 15) {
-      setError("Enter a valid phone number.");
+      setError(t("invalidPhone"));
       phone?.focus();
       return;
     }
     if (fulfillment === "delivery") {
-      if (!deliveryAddress || deliveryAddress.value.trim().length < 5) {
-        setError("Enter the delivery address or use your current location.");
-        deliveryAddress?.focus();
+      if (!address || address.value.trim().length < 5) {
+        setError(t("invalidAddress"));
+        address?.focus();
         return;
       }
     } else if (!pickupLocation || pickupLocation.value.trim().length < 3) {
-      setError("Enter a pickup location.");
+      setError(t("invalidPickupLocation"));
       pickupLocation?.focus();
       return;
     }
@@ -173,7 +231,7 @@ export default function CheckoutFlow({
             ? {
                 ...item,
                 quantity: Math.min(
-                  item.product.stockQuantity ?? 100,
+                  Math.min(item.product.stockQuantity ?? 100, 100),
                   item.quantity + change,
                 ),
               }
@@ -181,122 +239,159 @@ export default function CheckoutFlow({
         )
         .filter((item) => item.quantity > 0),
     );
+    setFulfillmentComplete(false);
   }
 
   function removeItem(productId: string) {
     setItems((current) =>
       current.filter((item) => item.product.id !== productId),
     );
+    setFulfillmentComplete(false);
   }
 
   function persistItems(nextItems: CheckoutItem[]) {
-    localStorage.setItem(
-      "ilphotox-cart",
-      JSON.stringify(
-        nextItems.map((item) => ({
-          productId: item.product.id,
-          quantity: item.quantity,
-        })),
-      ),
-    );
+    try {
+      localStorage.setItem(
+        "ilphotox-cart",
+        JSON.stringify(
+          nextItems.map((item) => ({
+            productId: item.product.id,
+            quantity: item.quantity,
+          })),
+        ),
+      );
+    } catch (caught) {
+      console.error("Could not save the checkout cart", caught);
+    }
   }
 
   useEffect(() => {
     if (!loading) persistItems(items);
   }, [items, loading]);
 
-  async function useMyLocation() {
+  function useMyLocation() {
     setError("");
     if (!navigator.geolocation) {
-      setError("Location services are not available in this browser.");
+      setError(t("locationUnavailable"));
       return;
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const address = document.querySelector<HTMLInputElement>(
+        const address = document.querySelector<HTMLTextAreaElement>(
           "[name=deliveryAddress]",
         );
         if (address) {
           address.value =
             `Map location: ${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
+          address.dataset.latitude = String(position.coords.latitude);
+          address.dataset.longitude = String(position.coords.longitude);
         }
-        address?.setAttribute(
-          "data-latitude",
-          String(position.coords.latitude),
-        );
-        address?.setAttribute(
-          "data-longitude",
-          String(position.coords.longitude),
-        );
       },
-      () => setError("Your location could not be accessed."),
+      () => setError(t("locationFailed")),
       { enableHighAccuracy: true, maximumAge: 60_000, timeout: 10_000 },
     );
   }
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!isAuthenticated) {
-      window.location.assign("/login?callbackUrl=%2Fcheckout");
+    if (!isCustomer) {
+      router.push("/login?callbackUrl=%2Fcheckout");
       return;
     }
     if (!fulfillmentComplete) {
-      setError("Complete delivery or pickup details before placing the order.");
+      setError(t("completeDelivery"));
       return;
     }
+
     setBusy(true);
     setError("");
+    setReceiptError(false);
     const form = event.currentTarget;
     const formData = new FormData(form);
     const addressInput = form.elements.namedItem(
       "deliveryAddress",
-    ) as HTMLInputElement | null;
+    ) as HTMLTextAreaElement | null;
     const latitude = addressInput?.dataset.latitude
       ? Number(addressInput.dataset.latitude)
       : undefined;
     const longitude = addressInput?.dataset.longitude
       ? Number(addressInput.dataset.longitude)
       : undefined;
-    const idempotencyKey =
-      typeof window.crypto.randomUUID === "function"
-        ? window.crypto.randomUUID()
-        : `${Date.now()}-${Math.random()}`;
+    const orderInput = {
+      items: items.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+      })),
+      deliveryName: String(formData.get("deliveryName") ?? "").trim(),
+      deliveryPhone: String(formData.get("deliveryPhone") ?? "").trim(),
+      deliveryAddress:
+        fulfillment === "delivery"
+          ? String(formData.get("deliveryAddress") ?? "").trim()
+          : "Pickup",
+      fulfillmentMethod: fulfillment,
+      paymentMode:
+        paymentChoice === "receipt" ? "receipt" : "cash_on_delivery",
+      deliveryZone: fulfillment === "delivery" ? deliveryZone : undefined,
+      pickupLocation:
+        fulfillment === "pickup"
+          ? String(formData.get("pickupLocation") ?? "").trim()
+          : undefined,
+      deliveryLatitude: latitude,
+      deliveryLongitude: longitude,
+      notifyByEmail: formData.get("notifyByEmail") === "on",
+      notifyByWhatsapp: formData.get("notifyByWhatsapp") === "on",
+      notificationLanguage: language,
+    };
+    const fingerprint = JSON.stringify(orderInput);
+    if (idempotencyRequest.current?.fingerprint !== fingerprint) {
+      idempotencyRequest.current = {
+        fingerprint,
+        key:
+          typeof window.crypto.randomUUID === "function"
+            ? window.crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`,
+      };
+    }
+    let createdOrderId = "";
+
     try {
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Idempotency-Key": idempotencyKey,
+          "Idempotency-Key": idempotencyRequest.current.key,
         },
-        body: JSON.stringify({
-          items: items.map((item) => ({
-            productId: item.product.id,
-            quantity: item.quantity,
-          })),
-          deliveryName: String(formData.get("deliveryName") ?? "").trim(),
-          deliveryPhone: String(formData.get("deliveryPhone") ?? "").trim(),
-          deliveryAddress:
-            fulfillment === "delivery"
-              ? String(formData.get("deliveryAddress") ?? "").trim()
-              : "Pickup",
-          fulfillmentMethod: fulfillment,
-          pickupLocation:
-            fulfillment === "pickup"
-              ? String(formData.get("pickupLocation") ?? "").trim()
-              : undefined,
-          deliveryLatitude: latitude,
-          deliveryLongitude: longitude,
-        }),
+        body: fingerprint,
       });
       const payload = (await response.json().catch(() => null)) as
-        | { order?: { id: string }; error?: string }
+        | {
+            order?: { id: string };
+            error?: string;
+            notificationDelivery?: {
+              delivery?: { failed: number; unavailable: number } | null;
+              warning?: string | null;
+            };
+          }
         | null;
       if (!response.ok) {
-        throw new Error(payload?.error || "Order could not be placed.");
+        throw new Error(payload?.error || t("orderFailed"));
       }
       if (!payload?.order?.id) throw new Error("Order ID was not returned.");
+
+      createdOrderId = payload.order.id;
       setOrderId(payload.order.id);
-      localStorage.removeItem("ilphotox-cart");
+      setNotificationWarning(
+        Boolean(
+          payload.notificationDelivery?.warning ||
+            payload.notificationDelivery?.delivery?.failed ||
+            payload.notificationDelivery?.delivery?.unavailable,
+        ),
+      );
+      try {
+        localStorage.removeItem("ilphotox-cart");
+      } catch (caught) {
+        console.error("Could not clear the saved cart after order creation", caught);
+      }
       setItems([]);
 
       if (paymentChoice === "receipt") {
@@ -319,19 +414,21 @@ export default function CheckoutFlow({
             const proofPayload = (await proofResponse.json().catch(
               () => null,
             )) as { error?: string } | null;
-            throw new Error(
-              proofPayload?.error ||
-                "Order created, but payment receipt could not be submitted.",
+            setReceiptError(true);
+            setError(
+              proofPayload?.error || t("paymentReceiptFailed"),
             );
+            return;
           }
           setReceiptSubmitted(true);
         }
       }
     } catch (caught) {
+      if (createdOrderId) {
+        setReceiptError(true);
+      }
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Checkout could not be completed.",
+        caught instanceof Error ? caught.message : t("checkoutFailed"),
       );
     } finally {
       setBusy(false);
@@ -340,8 +437,8 @@ export default function CheckoutFlow({
 
   async function messageMerchant(ownerId: string, merchantName: string) {
     setMerchantNotice("");
-    if (!isAuthenticated) {
-      window.location.assign("/login?callbackUrl=%2Fcheckout");
+    if (!isCustomer) {
+      router.push("/login?callbackUrl=%2Fcheckout");
       return;
     }
     try {
@@ -351,7 +448,9 @@ export default function CheckoutFlow({
         body: JSON.stringify({
           merchantId: ownerId,
           subject: merchantSubject || `Question about ${merchantName}`,
-          message: merchantMessage || `I have a question about products in my checkout.`,
+          message:
+            merchantMessage ||
+            `I have a question about products in my checkout.`,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -360,7 +459,7 @@ export default function CheckoutFlow({
       if (!response.ok) {
         throw new Error(payload?.error || "Message could not be sent.");
       }
-      setMerchantNotice(`Message sent to ${merchantName}.`);
+      setMerchantNotice(`${t("messageSent")} ${merchantName}`);
       setMerchantMessage("");
       setMerchantSubject("");
     } catch (caught) {
@@ -373,27 +472,38 @@ export default function CheckoutFlow({
   }
 
   if (loading) {
-    return <div className="checkout-loading">Loading your checkout…</div>;
+    return <div className="checkout-loading">{t("loading")}</div>;
   }
 
   if (orderId) {
     return (
       <div className="checkout-success">
         <span><CheckCircle2 size={34} /></span>
-        <h1>Order placed</h1>
-        <p>
-          Order #{orderId.slice(-8).toUpperCase()}
-          {receiptSubmitted
-            ? " · Payment receipt submitted for review"
-            : ""}
-        </p>
+        <h1>{t("orderPlaced")}</h1>
+        <p>{t("orderNumber")} #{orderId.slice(-8).toUpperCase()}</p>
+        {receiptSubmitted && <p>{t("receiptSubmitted")}</p>}
+        {notificationWarning && (
+          <p role="status">{t("externalNotificationWarning")}</p>
+        )}
+        {receiptError && (
+          <div className="checkout-error" role="alert">
+            <p>{error || t("receiptFailed")}</p>
+            <Link href={`/orders/${encodeURIComponent(orderId)}`}>
+              {t("retryReceiptOnOrder")}
+            </Link>
+          </div>
+        )}
         <div className="checkout-contact-actions">
-          <a href="tel:0788390989"><Phone size={17} /> Call support</a>
-          <a href="https://wa.me/250736494012" rel="noopener noreferrer" target="_blank">
-            <MessageCircle size={17} /> WhatsApp
+          <a href="tel:0788390989"><Phone size={17} /> {t("callSupport")}</a>
+          <a
+            href="https://wa.me/250736494012"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <MessageCircle size={17} /> {t("whatsappSupport")}
           </a>
           <Link href={`/orders/${encodeURIComponent(orderId)}`}>
-            View order
+            {t("viewOrder")}
           </Link>
         </div>
       </div>
@@ -404,9 +514,9 @@ export default function CheckoutFlow({
     return (
       <div className="checkout-empty">
         <span><Package size={30} /></span>
-        <h1>Your cart is empty</h1>
-        <p>Add products before starting checkout.</p>
-        <Link href="/">Continue shopping</Link>
+        <h1>{t("cartEmpty")}</h1>
+        <p>{t("cartEmptyDescription")}</p>
+        <Link href="/">{t("continueShopping")}</Link>
       </div>
     );
   }
@@ -429,111 +539,170 @@ export default function CheckoutFlow({
           <Image alt="" height={38} src="/ilphotox-shop-logo.png" width={38} />
           <span>ILPhotoX Shop</span>
         </Link>
-        <nav aria-label="Checkout navigation">
-          <Link href="/"><ShoppingBag size={16} /> Cart</Link>
-          <Link href="/support/all-in-one"><Headphones size={16} /> Support</Link>
-          <Link href="/checkout"><Banknote size={16} /> Payment</Link>
-          {isAuthenticated && <Link href="/orders"><Package size={16} /> My Orders</Link>}
+        <nav aria-label={t("navigation")}>
+          <Link href="/"><ShoppingBag size={16} /> {t("home")}</Link>
+          <Link href="/support/all-in-one">
+            <Headphones size={16} /> {t("support")}
+          </Link>
+          <Link href="/checkout"><Banknote size={16} /> {t("payment")}</Link>
+          {isCustomer && (
+            <Link href="/orders"><Package size={16} /> {t("myOrders")}</Link>
+          )}
+          <LanguageSelector
+            language={language}
+            onChange={setMarketplaceLanguage}
+          />
         </nav>
       </header>
 
       <div className="checkout-layout">
         <form className="checkout-main" onSubmit={submitOrder}>
           <div className="checkout-heading">
-            <Link href="/"><ArrowLeft size={16} /> Continue shopping</Link>
-            {isAuthenticated && <h1>Checkout</h1>}
+            <Link href="/"><ArrowLeft size={16} /> {t("continueShopping")}</Link>
+            <h1>{t("checkout")}</h1>
             <p>
-              {isAuthenticated
-                ? `Signed in as ${customerName}`
-                : "Review the items in your cart"}
+              {isCustomer
+                ? `${t("signedInAs")} ${customerName}`
+                : userRole
+                  ? t("customerAccountRequired")
+                  : t("reviewCart")}
             </p>
           </div>
 
-          {!isAuthenticated && (
+          {!isCustomer && (
             <section className="checkout-card checkout-guest-summary">
-              <h2><ShoppingBag size={19} /> Items in your cart</h2>
-              <p>Sign in to enter delivery details and choose a payment method.</p>
+              <h2><ShoppingBag size={19} /> {t("itemsInCart")}</h2>
+              <p>
+                {userRole
+                  ? t("customerAccountRequired")
+                  : t("signInToContinue")}
+              </p>
+              {userRole && (
+                <button
+                  className="checkout-location-button"
+                  onClick={() =>
+                    signOut({
+                      callbackUrl: "/login?callbackUrl=%2Fcheckout",
+                    })
+                  }
+                  type="button"
+                >
+                  {t("signOut")}
+                </button>
+              )}
             </section>
           )}
 
-          {isAuthenticated && <section className="checkout-card">
-            <h2><Truck size={19} /> Fulfillment</h2>
-            <div className="checkout-choice-grid">
-              <button
-                className={fulfillment === "delivery" ? "is-selected" : ""}
-                onClick={() => {
-                  setFulfillment("delivery");
-                  setFulfillmentComplete(false);
-                }}
-                type="button"
-              >
-                <Truck size={20} />
-                <span><strong>Delivery</strong><small>Deliver to your address</small></span>
-              </button>
-              <button
-                className={fulfillment === "pickup" ? "is-selected" : ""}
-                onClick={() => {
-                  setFulfillment("pickup");
-                  setFulfillmentComplete(false);
-                }}
-                type="button"
-              >
-                <MapPin size={20} />
-                <span><strong>Pickup</strong><small>Collect from the marketplace</small></span>
-              </button>
-            </div>
-
-            {fulfillment === "delivery" ? (
-              <div className="checkout-fields">
-                <label>
-                  Recipient name
-                  <input name="deliveryName" minLength={2} required />
-                </label>
-                <label>
-                  Phone number
-                  <input name="deliveryPhone" minLength={7} maxLength={32} required />
-                </label>
-                <label className="checkout-full-field">
-                  Delivery address
-                  <textarea
-                    data-longitude=""
-                    data-latitude=""
-                    name="deliveryAddress"
-                    minLength={5}
-                    required
-                    rows={3}
-                  />
-                </label>
+          {isCustomer && (
+            <section className="checkout-card">
+              <h2><Truck size={19} /> {t("fulfillment")}</h2>
+              <div className="checkout-choice-grid">
                 <button
-                  className="checkout-location-button checkout-full-field"
-                  onClick={useMyLocation}
+                  className={fulfillment === "delivery" ? "is-selected" : ""}
+                  onClick={() => {
+                    setFulfillment("delivery");
+                    setFulfillmentComplete(false);
+                  }}
                   type="button"
                 >
-                  <MapPin size={16} /> Use my current location
+                  <Truck size={20} />
+                  <span>
+                    <strong>{t("delivery")}</strong>
+                    <small>{t("deliveryDescription")}</small>
+                  </span>
+                </button>
+                <button
+                  className={fulfillment === "pickup" ? "is-selected" : ""}
+                  onClick={() => {
+                    setFulfillment("pickup");
+                    setFulfillmentComplete(false);
+                  }}
+                  type="button"
+                >
+                  <MapPin size={20} />
+                  <span>
+                    <strong>{t("pickup")}</strong>
+                    <small>{t("pickupDescription")}</small>
+                  </span>
                 </button>
               </div>
-            ) : (
-              <div className="checkout-fields">
-                <label>
-                  Name
-                  <input name="deliveryName" minLength={2} required />
-                </label>
-                <label>
-                  Phone number
-                  <input name="deliveryPhone" minLength={7} maxLength={32} required />
-                </label>
-                <label className="checkout-full-field">
-                  Pickup location
-                  <input
-                    name="pickupLocation"
-                    minLength={3}
-                    placeholder="Choose a store or pickup point"
-                    required
-                  />
-                </label>
-              </div>
-            )}
-            {isAuthenticated && (
+
+              {fulfillment === "delivery" ? (
+                <div className="checkout-fields">
+                  <label>
+                    {t("recipientName")}
+                    <input autoComplete="name" name="deliveryName" minLength={2} required />
+                  </label>
+                  <label>
+                    {t("phoneNumber")}
+                    <input
+                      autoComplete="tel"
+                      name="deliveryPhone"
+                      minLength={7}
+                      maxLength={32}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("deliveryZone")}
+                    <select
+                      onChange={(event) => {
+                        setDeliveryZone(event.target.value as DeliveryZone);
+                        setFulfillmentComplete(false);
+                      }}
+                      value={deliveryZone}
+                    >
+                      <option value="kigali">{t("kigali")}</option>
+                      <option value="outside_kigali">{t("outsideKigali")}</option>
+                      <option value="international">{t("international")}</option>
+                    </select>
+                  </label>
+                  <label className="checkout-full-field">
+                    {t("deliveryAddress")}
+                    <textarea
+                      data-longitude=""
+                      data-latitude=""
+                      name="deliveryAddress"
+                      minLength={5}
+                      required
+                      rows={3}
+                    />
+                  </label>
+                  <button
+                    className="checkout-location-button checkout-full-field"
+                    onClick={useMyLocation}
+                    type="button"
+                  >
+                    <MapPin size={16} /> {t("currentLocation")}
+                  </button>
+                </div>
+              ) : (
+                <div className="checkout-fields">
+                  <label>
+                    {t("recipientName")}
+                    <input autoComplete="name" name="deliveryName" minLength={2} required />
+                  </label>
+                  <label>
+                    {t("phoneNumber")}
+                    <input
+                      autoComplete="tel"
+                      name="deliveryPhone"
+                      minLength={7}
+                      maxLength={32}
+                      required
+                    />
+                  </label>
+                  <label className="checkout-full-field">
+                    {t("pickupLocation")}
+                    <input
+                      name="pickupLocation"
+                      minLength={3}
+                      placeholder={t("pickupPlaceholder")}
+                      required
+                    />
+                  </label>
+                </div>
+              )}
               <button
                 className="checkout-location-button"
                 disabled={fulfillmentComplete}
@@ -541,160 +710,198 @@ export default function CheckoutFlow({
                 type="button"
               >
                 {fulfillmentComplete
-                  ? "Fulfillment confirmed"
-                  : "Add payment"}
+                  ? t("fulfillmentConfirmed")
+                  : t("confirmFulfillment")}
               </button>
-            )}
-          </section>}
+            </section>
+          )}
 
-          {isAuthenticated && fulfillmentComplete && <section className="checkout-card">
-            <h2><Banknote size={19} /> Payment</h2>
-            <div className="checkout-choice-grid">
-              <button
-                className={paymentChoice === "receipt" ? "is-selected" : ""}
-                onClick={() => setPaymentChoice("receipt")}
-                type="button"
-              >
-                <ReceiptText size={20} />
-                <span><strong>Pay on my side</strong><small>Upload bank/mobile receipt</small></span>
-              </button>
-              <button
-                className={paymentChoice === "system" ? "is-selected" : ""}
-                onClick={() => setPaymentChoice("system")}
-                type="button"
-              >
-                <Banknote size={20} />
-                <span><strong>Pay with system</strong><small>Gateway integration not configured</small></span>
-              </button>
-              <button
-                className={paymentChoice === "cod" ? "is-selected" : ""}
-                onClick={() => setPaymentChoice("cod")}
-                type="button"
-              >
-                <Truck size={20} />
-                <span><strong>Pay on delivery/pickup</strong><small>Cash or agreed payment</small></span>
-              </button>
-            </div>
-
-            {paymentChoice === "receipt" && (
-              <div className="checkout-payment-details">
-                {accounts.map((account) => (
-                  <div className="checkout-payment-account" key={account.id}>
-                    <strong>{account.type === "bank" ? "Bank" : "Mobile money"} · {account.provider}</strong>
-                    <span>{account.accountName}</span>
-                    <code>{account.accountNumber}</code>
-                  </div>
-                ))}
-                {accounts.length === 0 && (
-                  <p role="note">No active payment account is configured. Contact support.</p>
+          {isCustomer && fulfillmentComplete && (
+            <section className="checkout-card">
+              <h2><Banknote size={19} /> {t("paymentHeading")}</h2>
+              <div className="checkout-choice-grid">
+                {accounts.length > 0 && (
+                  <button
+                    className={paymentChoice === "receipt" ? "is-selected" : ""}
+                    onClick={() => setPaymentChoice("receipt")}
+                    type="button"
+                  >
+                    <ReceiptText size={20} />
+                    <span>
+                      <strong>{t("payByReceipt")}</strong>
+                      <small>{t("payByReceiptDescription")}</small>
+                    </span>
+                  </button>
                 )}
+                <button
+                  className={paymentChoice === "cod" ? "is-selected" : ""}
+                  onClick={() => setPaymentChoice("cod")}
+                  type="button"
+                >
+                  <Truck size={20} />
+                  <span>
+                    <strong>{t("payOnCollection")}</strong>
+                    <small>{t("payOnCollectionDescription")}</small>
+                  </span>
+                </button>
+              </div>
+
+              {accounts.length === 0 && (
+                <p role="note">{t("noPaymentAccount")}</p>
+              )}
+
+              {paymentChoice === "receipt" && accounts.length > 0 && (
+                <div className="checkout-payment-details">
+                  <h3>{t("paymentInstructions")}</h3>
+                  {accounts.map((account) => (
+                    <div className="checkout-payment-account" key={account.id}>
+                      <strong>
+                        {account.type === "bank"
+                          ? t("bankTransfer")
+                          : t("mobileMoney")}{" "}
+                        · {account.provider}
+                      </strong>
+                      <span>{account.accountName}</span>
+                      <code>{account.accountNumber}</code>
+                    </div>
+                  ))}
+                  <div className="checkout-fields">
+                    <label>
+                      {t("paymentHeading")}
+                      <select
+                        onChange={(event) =>
+                          setPaymentMethod(
+                            event.target.value as "bank_transfer" | "mobile_money",
+                          )
+                        }
+                        value={paymentMethod}
+                      >
+                        {accounts.some((account) => account.type === "bank") && (
+                          <option value="bank_transfer">{t("bankTransfer")}</option>
+                        )}
+                        {accounts.some(
+                          (account) => account.type === "mobile_money",
+                        ) && (
+                          <option value="mobile_money">{t("mobileMoney")}</option>
+                        )}
+                      </select>
+                    </label>
+                    <label>
+                      {t("transactionReference")}
+                      <input
+                        name="transactionReference"
+                        minLength={3}
+                        maxLength={120}
+                        required
+                      />
+                    </label>
+                    <label className="checkout-full-field">
+                      {t("uploadReceipt")}
+                      <input
+                        accept="application/pdf,image/jpeg,image/png"
+                        name="receipt"
+                        required
+                        type="file"
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {isCustomer && fulfillmentComplete && (
+            <>
+              <section className="checkout-card">
+                <h2><MessageCircle size={19} /> {t("messageMerchants")}</h2>
+                {merchantIds.map(([ownerId, merchantName]) => {
+                  const merchant = items.find(
+                    (item) => item.product.ownerId === ownerId,
+                  )?.product;
+                  return (
+                    <div className="checkout-merchant-row" key={ownerId}>
+                      <div>
+                        <strong>{merchantName}</strong>
+                        {merchant?.owner?.phone && (
+                          <a href={`tel:${merchant.owner.phone}`}>
+                            <Phone size={14} /> {t("callMerchant")}
+                          </a>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => messageMerchant(ownerId, merchantName)}
+                      >
+                        <MessageCircle size={16} /> {t("sendMessage")}
+                      </button>
+                    </div>
+                  );
+                })}
                 <div className="checkout-fields">
                   <label>
-                    Payment method
-                    <select
-                      onChange={(event) =>
-                        setPaymentMethod(
-                          event.target.value as "bank_transfer" | "mobile_money",
-                        )
-                      }
-                      value={paymentMethod}
-                    >
-                      {accounts.some((account) => account.type === "bank") && (
-                        <option value="bank_transfer">Bank transfer</option>
-                      )}
-                      {accounts.some((account) => account.type === "mobile_money") && (
-                        <option value="mobile_money">Mobile money</option>
-                      )}
-                    </select>
-                  </label>
-                  <label>
-                    Transaction reference
-                    <input name="transactionReference" minLength={3} maxLength={120} required />
+                    {t("subject")}
+                    <input
+                      maxLength={200}
+                      onChange={(event) => setMerchantSubject(event.target.value)}
+                      value={merchantSubject}
+                    />
                   </label>
                   <label className="checkout-full-field">
-                    Upload receipt
-                    <input
-                      accept="application/pdf,image/jpeg,image/png"
-                      name="receipt"
-                      required
-                      type="file"
+                    {t("message")}
+                    <textarea
+                      maxLength={4000}
+                      onChange={(event) => setMerchantMessage(event.target.value)}
+                      rows={3}
+                      value={merchantMessage}
                     />
                   </label>
                 </div>
-              </div>
-            )}
-            {paymentChoice === "system" && (
-              <p className="checkout-payment-unavailable" role="note">
-                <Upload size={18} /> Pay with system is not configured yet. Choose receipt or pay on delivery/pickup.
-              </p>
-            )}
-          </section>}
+                {merchantNotice && <p role="status">{merchantNotice}</p>}
+              </section>
 
-          {isAuthenticated && fulfillmentComplete && <section className="checkout-card">
-            <h2><MessageCircle size={19} /> Message merchants</h2>
-            {merchantIds.map(([ownerId, merchantName]) => (
-              <div className="checkout-merchant-row" key={ownerId}>
-                <div>
-                  <strong>{merchantName}</strong>
-                  {items.find((item) => item.product.ownerId === ownerId)?.product.owner?.phone && (
-                    <a
-                      href={`tel:${items.find((item) => item.product.ownerId === ownerId)?.product.owner?.phone}`}
-                    >
-                      <Phone size={14} /> Call merchant
-                    </a>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => messageMerchant(ownerId, merchantName)}
-                >
-                  <MessageCircle size={16} /> Send message
-                </button>
-              </div>
-            ))}
-            <div className="checkout-fields">
-              <label>
-                Subject
-                <input
-                  maxLength={200}
-                  onChange={(event) => setMerchantSubject(event.target.value)}
-                  value={merchantSubject}
-                />
-              </label>
-              <label className="checkout-full-field">
-                Message
-                <textarea
-                  maxLength={4000}
-                  onChange={(event) => setMerchantMessage(event.target.value)}
-                  rows={3}
-                  value={merchantMessage}
-                />
-              </label>
-            </div>
-            {merchantNotice && <p role="status">{merchantNotice}</p>}
-          </section>}
+              <section className="checkout-card checkout-notification-preferences">
+                <h2>{t("orderUpdates")}</h2>
+                <label>
+                  <input name="notifyByEmail" type="checkbox" />
+                  <span>{t("emailUpdates")}</span>
+                </label>
+                <label>
+                  <input name="notifyByWhatsapp" type="checkbox" />
+                  <span>{t("whatsappUpdates")}</span>
+                </label>
+              </section>
+            </>
+          )}
 
-          {error && <p className="checkout-error" role="alert">{error}</p>}
+          {error && !orderId && (
+            <p className="checkout-error" role="alert">{error}</p>
+          )}
           <button
             className="checkout-submit"
-            disabled={busy || (isAuthenticated && paymentChoice === "system")}
-            onClick={
-              isAuthenticated
-                ? undefined
-                : () => window.location.assign("/login?callbackUrl=%2Fcheckout")
+            disabled={
+              busy ||
+              (isCustomer && !fulfillmentComplete) ||
+              Boolean(userRole && !isCustomer)
             }
-            type={isAuthenticated ? "submit" : "button"}
+            onClick={
+              !isCustomer && !userRole
+                ? () => router.push("/login?callbackUrl=%2Fcheckout")
+                : undefined
+            }
+            type={isCustomer ? "submit" : "button"}
           >
             {busy
-              ? "Placing order…"
-              : isAuthenticated
-                ? `Place order · ${subtotal.toLocaleString("en-RW")} RWF`
-                : `Sign in to place order · ${subtotal.toLocaleString("en-RW")} RWF`}
+              ? t("placingOrder")
+              : isCustomer
+                ? `${t("placeOrder")} · ${formatMoney(total)}`
+                : userRole
+                  ? t("customerAccountRequired")
+                  : `${t("signInToPlaceOrder")} · ${formatMoney(total)}`}
           </button>
         </form>
 
         <aside className="checkout-summary">
-          <h2>Order summary</h2>
+          <h2>{t("orderSummary")}</h2>
           {items.map((item) => (
             <article key={item.product.id}>
               <Image
@@ -706,28 +913,62 @@ export default function CheckoutFlow({
               />
               <div>
                 <strong>{item.product.name}</strong>
-                <small>{item.quantity} × {item.product.price.toLocaleString("en-RW")} RWF</small>
+                <small>
+                  {item.quantity} × {formatMoney(item.product.price)}
+                </small>
+                {item.product.commissionAmount ? (
+                  <small className="product-fee-note">
+                    Platform fee included · {formatMoney(item.product.commissionAmount)}
+                  </small>
+                ) : null}
               </div>
               <button
                 type="button"
+                aria-label={t("remove")}
                 onClick={() => removeItem(item.product.id)}
               >
-                Remove
+                {t("remove")}
               </button>
               <div className="checkout-summary-quantity">
-                <button type="button" onClick={() => changeQuantity(item.product.id, -1)}>−</button>
+                <button
+                  aria-label={t("decreaseQuantity")}
+                  type="button"
+                  onClick={() => changeQuantity(item.product.id, -1)}
+                >
+                  −
+                </button>
                 <span>{item.quantity}</span>
-                <button type="button" onClick={() => changeQuantity(item.product.id, 1)}>+</button>
+                <button
+                  aria-label={t("increaseQuantity")}
+                  type="button"
+                  onClick={() => changeQuantity(item.product.id, 1)}
+                >
+                  +
+                </button>
               </div>
             </article>
           ))}
           <div className="checkout-summary-total">
-            <span>Subtotal</span>
-            <strong>{subtotal.toLocaleString("en-RW")} RWF</strong>
+            <span>{t("subtotal")}</span>
+            <strong>{formatMoney(subtotal)}</strong>
+          </div>
+          <div className="checkout-summary-total">
+            <span>{t("deliveryFee")}</span>
+            <strong>{deliveryFee ? formatMoney(deliveryFee) : t("free")}</strong>
+          </div>
+          {fulfillment === "delivery" && (
+            <div className="checkout-summary-total">
+              <span>{t("estimatedDelivery")}</span>
+              <strong>{estimatedDelivery}</strong>
+            </div>
+          )}
+          <div className="checkout-summary-total">
+            <span>{t("orderTotal")}</span>
+            <strong>{formatMoney(total)}</strong>
           </div>
           <div className="checkout-call-actions">
-            <a href="tel:0788390989"><Phone size={16} /> Call Super Admin</a>
-            <a href="tel:0788390989"><Truck size={16} /> Call Delivery</a>
+            <a href="tel:0788390989"><Phone size={16} /> {t("callSupport")}</a>
+            <a href="tel:0788390989"><Truck size={16} /> {t("delivery")}</a>
           </div>
         </aside>
       </div>

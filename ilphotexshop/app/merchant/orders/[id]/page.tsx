@@ -46,7 +46,7 @@ async function MerchantOrderDetailContent({
   const order = await getMerchantOrder(seller, id);
   if (!order) notFound();
   const sellerSubtotal = order.items.reduce(
-    (sum, item) => sum + item.lineTotal,
+    (sum, item) => sum + item.merchantLineTotal,
     0,
   );
   const recordFields = [
@@ -55,7 +55,7 @@ async function MerchantOrderDetailContent({
     { label: "Placed", value: dateFormat.format(order.createdAt) },
     ...order.items.map((item, index) => ({
       label: `Your item ${index + 1}`,
-      value: `${item.productName} · ${item.quantity} × ${numberFormat.format(item.unitPrice)} RWF · ${numberFormat.format(item.lineTotal)} RWF`,
+      value: `${item.productName} · ${item.quantity} × ${numberFormat.format(item.merchantUnitPrice)} RWF · ${numberFormat.format(item.merchantLineTotal)} RWF`,
     })),
     {
       label: "Your items subtotal",
@@ -115,8 +115,8 @@ async function MerchantOrderDetailContent({
                     </div>
                   </td>
                   <td>{numberFormat.format(item.quantity)}</td>
-                  <td>{numberFormat.format(item.unitPrice)} RWF</td>
-                  <td>{numberFormat.format(item.lineTotal)} RWF</td>
+                  <td>{numberFormat.format(item.merchantUnitPrice)} RWF</td>
+                  <td>{numberFormat.format(item.merchantLineTotal)} RWF</td>
                 </tr>
               ))}
             </tbody>

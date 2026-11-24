@@ -8,6 +8,7 @@ import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { rateLimitResponse } from "@/lib/http/rate-limit-response";
 import { checkOrderWriteLimit } from "@/lib/rate-limit";
 import { orderIdSchema } from "@/lib/validation/orders";
+import { dispatchOrderNotificationsSafely } from "@/lib/notifications/order-notification-delivery";
 
 type CancelOrderRouteContext = {
   params: Promise<{ id: string }>;
@@ -30,8 +31,12 @@ export async function POST(
 
     const order = await cancelCustomerOrder(customer.id, parsedId.data);
     if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
+    const notificationDelivery = await dispatchOrderNotificationsSafely(
+      order.id,
+      "cancelled",
+    );
 
-    return Response.json(order, {
+    return Response.json({ ...order, notificationDelivery }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

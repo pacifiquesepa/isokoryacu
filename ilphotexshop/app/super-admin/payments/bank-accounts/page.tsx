@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Building2, CreditCard, Smartphone } from "lucide-react";
 import { PaymentAccountType } from "@prisma/client";
 import SuperAdminPaymentAccountForm from "@/components/super-admin/payment-account-form";
@@ -15,11 +16,25 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
   timeZone: "UTC",
 });
 
-export default async function SuperAdminPaymentAccountsPage({
-  searchParams,
-}: {
+type SuperAdminPaymentAccountsPageProps = {
   searchParams: Promise<{ type?: string }>;
-}) {
+};
+
+export default function SuperAdminPaymentAccountsPage({
+  searchParams,
+}: SuperAdminPaymentAccountsPageProps) {
+  return (
+    <Suspense
+      fallback={<div className="super-admin-loading">Loading payment accounts…</div>}
+    >
+      <SuperAdminPaymentAccountsContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function SuperAdminPaymentAccountsContent({
+  searchParams,
+}: SuperAdminPaymentAccountsPageProps) {
   const params = await searchParams;
   const type =
     params.type === PaymentAccountType.mobile_money

@@ -123,6 +123,11 @@ export default function ProductCard({
             {product.previousPrice && (
               <del>{formatMoney(product.previousPrice, language)}</del>
             )}
+            {product.commissionAmount ? (
+              <small className="product-fee-note">
+                Platform fee included · {formatMoney(product.commissionAmount, language)}
+              </small>
+            ) : null}
           </div>
           <div className="product-stock">
             <span className="product-stock-dot" />

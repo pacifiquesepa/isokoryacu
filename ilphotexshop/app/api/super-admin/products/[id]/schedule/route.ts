@@ -1,7 +1,9 @@
+import { revalidatePath } from "next/cache";
 import { requireUserRole } from "@/lib/authorization";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import { setProductScheduledState } from "@/lib/data-access/super-admin-product-management";
+import { InvalidProductScheduleError } from "@/lib/data-access/products";
 import { productIdSchema, productScheduleSchema } from "@/lib/validation/products";
 
 export async function PATCH(
@@ -21,8 +23,13 @@ export async function PATCH(
     }
     const result = await setProductScheduledState(actor.id, parsedId.data, scheduledAt);
     void result;
+    revalidatePath("/super-admin/products/scheduled-products");
+    revalidatePath("/");
     return Response.json({ id: parsedId.data, scheduledAt }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    if (error instanceof InvalidProductScheduleError) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
     return apiErrorResponse(error, "Failed to schedule product", "Schedule could not be updated");
   }
 }

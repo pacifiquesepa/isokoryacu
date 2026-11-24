@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import CheckoutFlow from "@/components/marketplace/checkout-flow";
 import { getAuthenticatedUser } from "@/lib/authorization";
+import { getDeliverySettings } from "@/lib/data-access/delivery-settings";
 import { getActivePaymentAccounts } from "@/lib/data-access/order-payment-proofs";
 
 export const metadata: Metadata = {
@@ -22,12 +23,16 @@ async function CheckoutContent() {
   await connection();
   const user = await getAuthenticatedUser();
   const isCustomer = user?.role === "customer";
-  const accounts = isCustomer ? await getActivePaymentAccounts() : [];
+  const [accounts, deliverySettings] = await Promise.all([
+    isCustomer ? getActivePaymentAccounts() : Promise.resolve([]),
+    getDeliverySettings(),
+  ]);
   return (
     <CheckoutFlow
       accounts={accounts}
       customerName={user?.name ?? ""}
-      isAuthenticated={isCustomer}
+      userRole={user?.role ?? null}
+      deliverySettings={deliverySettings}
     />
   );
 }

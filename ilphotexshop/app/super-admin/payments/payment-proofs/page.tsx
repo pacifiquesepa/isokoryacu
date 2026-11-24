@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -20,7 +21,19 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
   timeZone: "UTC",
 });
 
-export default async function SuperAdminPaymentProofsPage({
+export default function SuperAdminPaymentProofsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; page?: string }>;
+}) {
+  return (
+    <Suspense fallback={<div className="super-admin-loading">Loading payment proofs…</div>}>
+      <PaymentProofsContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function PaymentProofsContent({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string; page?: string }>;
@@ -154,7 +167,7 @@ export default async function SuperAdminPaymentProofsPage({
                           <span>
                             Order: {proof.order.status}
                             <br />
-                            Receipt amount: {proof.order.subtotal.toLocaleString("en-RW")} {proof.order.currency}
+                            Receipt amount: {(proof.order.subtotal + proof.order.deliveryFee).toLocaleString("en-RW")} {proof.order.currency}
                           </span>
                         )}
                       </td>

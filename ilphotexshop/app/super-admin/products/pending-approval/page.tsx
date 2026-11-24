@@ -143,7 +143,7 @@ export default async function PendingProductApprovalPage({
                         </div>
                       </td>
                       <td>{product.seller}</td>
-                      <td>{product.category}</td>
+                      <td>{product.categoryInfo.name}</td>
                       <td>{numberFormat.format(product.price)} RWF</td>
                       <td>{numberFormat.format(product.stockQuantity)}</td>
                       <td>{dateFormat.format(product.updatedAt)}</td>

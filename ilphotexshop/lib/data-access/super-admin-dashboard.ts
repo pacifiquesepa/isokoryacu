@@ -189,7 +189,14 @@ export async function getSuperAdminDashboardData() {
     })),
     ...recentKycAudits.map((audit) => ({
       id: `kyc-${audit.id}`,
-      description: `${audit.action === "approved" ? "Approved" : audit.action === "rejected" ? "Declined" : "Erased"} a merchant application`,
+      description:
+        audit.action === "approved"
+          ? "Approved a merchant application"
+          : audit.action === "rejected"
+            ? "Declined a merchant application"
+            : audit.action === "reverification_requested"
+              ? "Requested merchant re-verification"
+              : "Erased a merchant application",
       actorName: audit.actor.name,
       createdAt: audit.createdAt,
       href: `/super-admin/security/merchant-kyc/audit/${encodeURIComponent(audit.id)}`,

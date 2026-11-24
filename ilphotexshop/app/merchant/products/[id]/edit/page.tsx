@@ -6,6 +6,10 @@ import { ChevronLeft, PackageCheck } from "lucide-react";
 import MerchantProductForm from "@/components/merchant/product-form";
 import { requireMerchantPageUser } from "@/lib/authorization";
 import { getMerchantProduct } from "@/lib/data-access/merchant-dashboard";
+import {
+  getActiveMerchantProductSubcategories,
+  getActiveProductCategories,
+} from "@/lib/data-access/products";
 
 export const metadata: Metadata = {
   title: "Edit product | Merchant portal",
@@ -32,7 +36,11 @@ async function EditMerchantProductContent({
     requireMerchantPageUser(),
     params,
   ]);
-  const product = await getMerchantProduct(seller, id);
+  const [product, subcategories, categories] = await Promise.all([
+    getMerchantProduct(seller, id),
+    getActiveMerchantProductSubcategories(),
+    getActiveProductCategories(),
+  ]);
   if (!product) notFound();
 
   return (
@@ -43,7 +51,7 @@ async function EditMerchantProductContent({
             <Link href="/merchant/products">Products</Link> / Edit listing
           </div>
           <h1>Edit product</h1>
-          <p>Changes to a listing return it to unpublished review.</p>
+          <p>Update product details and choose whether to save a draft, request approval, or schedule publication.</p>
         </div>
       </div>
       <section className="merchant-panel merchant-form-panel">
@@ -53,7 +61,7 @@ async function EditMerchantProductContent({
             <p>Update the listing and keep your inventory accurate.</p>
           </div>
         </div>
-        <MerchantProductForm product={product} />
+        <MerchantProductForm categories={categories} product={product} subcategories={subcategories} />
       </section>
       <Link className="merchant-back-link" href="/merchant/products">
         <ChevronLeft size={16} /> Back to products

@@ -19,6 +19,11 @@ export const paymentProofReviewSchema = z.discriminatedUnion("action", [
 
 export const paymentProofIdSchema = z.string().trim().min(1).max(100);
 
+export const customerPaymentProofQuerySchema = z.object({
+  status: z.enum(["all", "pending", "approved", "rejected"]).default("all"),
+  offset: z.coerce.number().int().min(0).max(10_000).default(0),
+});
+
 export type PaymentProofSubmission = z.infer<
   typeof paymentProofSubmissionSchema
 >;

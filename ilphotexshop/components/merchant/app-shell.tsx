@@ -50,6 +50,8 @@ export default function MerchantAppShell({
       ? "products"
       : pathname.startsWith("/merchant/orders")
         ? "orders"
+        : pathname.startsWith("/merchant/shop")
+          ? "shop"
         : pathname.startsWith("/merchant/profile")
           ? "account"
           : "overview";

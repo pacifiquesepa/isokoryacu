@@ -1,12 +1,22 @@
-export type CategoryKey = "technology" | "fashion" | "home" | "beauty";
+export type CategoryKey = string;
 
 export type Product = {
   id: string;
+  sku?: string | null;
+  brand?: string | null;
+  subcategory?: string | null;
   name: string;
   nameFr?: string | null;
   nameRw?: string | null;
+  description?: string | null;
+  warranty?: string | null;
+  specifications?: { name: string; value: string }[] | null;
+  returnPolicy?: string | null;
   category: CategoryKey;
+  categoryLabel?: string;
   price: number;
+  basePrice?: number;
+  commissionAmount?: number;
   previousPrice?: number | null;
   rating: number;
   reviewCount: number;
@@ -18,6 +28,7 @@ export type Product = {
   location: string;
   stockQuantity?: number;
   isFeatured?: boolean;
+  images?: { id: string; sortOrder: number }[];
 };
 
 export const products: Product[] = [

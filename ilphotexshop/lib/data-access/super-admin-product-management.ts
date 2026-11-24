@@ -1,7 +1,8 @@
 import "server-only";
 
-import { Prisma, ProductCategory } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { requireSuperAdminPageUser } from "@/lib/authorization";
+import { InvalidProductScheduleError } from "@/lib/data-access/products";
 import { prisma } from "@/lib/prisma";
 
 export const SUPER_ADMIN_PRODUCT_MANAGEMENT_PAGE_SIZE = 20;
@@ -19,6 +20,8 @@ export async function getSuperAdminProductManagement(
     ? {
         OR: [
           { name: { contains: query, mode: Prisma.QueryMode.insensitive } },
+          { sku: { contains: query, mode: Prisma.QueryMode.insensitive } },
+          { brand: { contains: query, mode: Prisma.QueryMode.insensitive } },
           { seller: { contains: query, mode: Prisma.QueryMode.insensitive } },
           { location: { contains: query, mode: Prisma.QueryMode.insensitive } },
         ],
@@ -26,7 +29,7 @@ export async function getSuperAdminProductManagement(
     : {};
   const where =
     view === "scheduled"
-      ? { scheduledAt: { not: null }, ...search }
+      ? { moderationStatus: "scheduled" as const, scheduledAt: { not: null }, ...search }
       : view === "rejected"
         ? { moderationStatus: "rejected" as const, ...search }
         : { moderationStatus: "hidden" as const, ...search };
@@ -39,6 +42,7 @@ export async function getSuperAdminProductManagement(
         image: true,
         seller: true,
         category: true,
+        categoryInfo: { select: { name: true } },
         price: true,
         stockQuantity: true,
         isPublished: true,
@@ -70,16 +74,37 @@ export async function setProductScheduledState(
   await requireSuperAdminPageUser("/super-admin/products/scheduled-products");
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    select: { id: true, ownerId: true, isPublished: true },
+    select: {
+      id: true,
+      ownerId: true,
+      isPublished: true,
+      moderationStatus: true,
+    },
   });
   if (!product) return null;
   if (scheduledAt) {
-    if (scheduledAt.getTime() <= Date.now()) throw new Error("Schedule time must be in the future");
-    if (!product.isPublished) throw new Error("Only published products can be scheduled");
+    if (scheduledAt.getTime() <= Date.now()) {
+      throw new InvalidProductScheduleError();
+    }
+    if (!product.isPublished && product.moderationStatus !== "scheduled") {
+      throw new Error("Only published products can be scheduled");
+    }
   }
   await prisma.product.update({
     where: { id: productId },
-    data: { scheduledAt },
+    data: scheduledAt
+      ? {
+          scheduledAt,
+          isPublished: false,
+          isFeatured: false,
+          moderationStatus: "scheduled",
+        }
+      : {
+          scheduledAt: null,
+          ...(product.moderationStatus === "scheduled"
+            ? { isPublished: true, moderationStatus: "published" }
+            : {}),
+        },
   });
   return { id: productId, scheduledAt };
 }
@@ -94,14 +119,16 @@ export async function getProductSubcategories(search: string) {
         ],
       }
     : {};
-  const [rows, active, inactive] = await prisma.$transaction([
+  const [rows, active, inactive, categories] = await prisma.$transaction([
     prisma.productSubcategory.findMany({
       where,
       select: {
         id: true,
         category: true,
+        categoryInfo: { select: { name: true } },
         name: true,
         slug: true,
+        commissionBasisPoints: true,
         isActive: true,
         createdAt: true,
         _count: { select: { products: true } },
@@ -110,26 +137,87 @@ export async function getProductSubcategories(search: string) {
     }),
     prisma.productSubcategory.count({ where: { isActive: true } }),
     prisma.productSubcategory.count({ where: { isActive: false } }),
+    prisma.productCategoryCatalog.findMany({
+      select: { slug: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
-  return { rows, active, inactive };
+  return { rows, active, inactive, categories };
 }
 
 export async function upsertProductSubcategory(input: {
   id?: string;
-  category: ProductCategory;
+  category: string;
   name: string;
   slug: string;
+  commissionBasisPoints?: number | null;
 }) {
   await requireSuperAdminPageUser("/super-admin/products/subcategories");
   if (input.id) {
+    const [existing, category] = await prisma.$transaction([
+      prisma.productSubcategory.findUnique({
+        where: { id: input.id },
+        select: { category: true, _count: { select: { products: true } } },
+      }),
+      prisma.productCategoryCatalog.findUnique({
+        where: { slug: input.category },
+        select: { slug: true },
+      }),
+    ]);
+    if (!existing) return null;
+    if (!category) throw new InvalidProductCategorySelectionError();
+    if (existing.category !== input.category && existing._count.products > 0) {
+      throw new ProductSubcategoryInUseError();
+    }
     return prisma.productSubcategory.update({
       where: { id: input.id },
-      data: { category: input.category, name: input.name, slug: input.slug },
+      data: {
+        category: input.category,
+        name: input.name,
+        slug: input.slug,
+        commissionBasisPoints: input.commissionBasisPoints ?? null,
+      },
     });
   }
-  return prisma.productSubcategory.create({
-    data: { category: input.category, name: input.name, slug: input.slug },
+  const category = await prisma.productCategoryCatalog.findUnique({
+    where: { slug: input.category },
+    select: { slug: true },
   });
+  if (!category) throw new InvalidProductCategorySelectionError();
+  return prisma.productSubcategory.create({
+    data: {
+      category: input.category,
+      name: input.name,
+      slug: input.slug,
+      commissionBasisPoints: input.commissionBasisPoints ?? null,
+    },
+  });
+}
+
+export class InvalidProductCategorySelectionError extends Error {
+  constructor() {
+    super("Choose a valid product category");
+    this.name = "InvalidProductCategorySelectionError";
+  }
+}
+
+export class ProductSubcategoryInUseError extends Error {
+  constructor() {
+    super("A subcategory assigned to products cannot be moved or deleted");
+    this.name = "ProductSubcategoryInUseError";
+  }
+}
+
+export async function deleteProductSubcategory(id: string) {
+  await requireSuperAdminPageUser("/super-admin/products/subcategories");
+  const subcategory = await prisma.productSubcategory.findUnique({
+    where: { id },
+    select: { _count: { select: { products: true } } },
+  });
+  if (!subcategory) return false;
+  if (subcategory._count.products > 0) throw new ProductSubcategoryInUseError();
+  const result = await prisma.productSubcategory.deleteMany({ where: { id } });
+  return result.count === 1;
 }
 
 export async function setProductSubcategoryStatus(id: string, isActive: boolean) {
@@ -138,6 +226,81 @@ export async function setProductSubcategoryStatus(id: string, isActive: boolean)
     where: { id },
     data: { isActive },
   });
+  return result.count === 1;
+}
+
+export async function getSuperAdminProductCategories() {
+  await requireSuperAdminPageUser("/super-admin/products/categories");
+  return prisma.productCategoryCatalog.findMany({
+    select: {
+      slug: true,
+      name: true,
+      description: true,
+      commissionBasisPoints: true,
+      lowStockThreshold: true,
+      _count: { select: { products: true, subcategories: true } },
+    },
+    orderBy: { name: "asc" },
+  });
+}
+
+export async function createProductCategory(input: {
+  slug: string;
+  name: string;
+  description?: string | null;
+  commissionBasisPoints?: number | null;
+  lowStockThreshold?: number | null;
+}) {
+  await requireSuperAdminPageUser("/super-admin/products/categories");
+  return prisma.productCategoryCatalog.create({
+    data: {
+      slug: input.slug,
+      name: input.name,
+      description: input.description ?? null,
+      commissionBasisPoints: input.commissionBasisPoints ?? null,
+      lowStockThreshold: input.lowStockThreshold ?? null,
+    },
+  });
+}
+
+export async function updateProductCategory(input: {
+  slug: string;
+  name: string;
+  description?: string | null;
+  commissionBasisPoints?: number | null;
+  lowStockThreshold?: number | null;
+}) {
+  await requireSuperAdminPageUser("/super-admin/products/categories");
+  const result = await prisma.productCategoryCatalog.updateMany({
+    where: { slug: input.slug },
+    data: {
+      name: input.name,
+      description: input.description ?? null,
+      commissionBasisPoints: input.commissionBasisPoints ?? null,
+      lowStockThreshold: input.lowStockThreshold ?? null,
+    },
+  });
+  return result.count === 1;
+}
+
+export class ProductCategoryInUseError extends Error {
+  constructor() {
+    super("A category with products or subcategories cannot be deleted");
+    this.name = "ProductCategoryInUseError";
+  }
+}
+
+export async function deleteProductCategory(slug: string) {
+  await requireSuperAdminPageUser("/super-admin/products/categories");
+  const category = await prisma.productCategoryCatalog.findUnique({
+    where: { slug },
+    select: { _count: { select: { products: true, subcategories: true } } },
+  });
+  if (!category) return false;
+  if (category._count.products > 0 || category._count.subcategories > 0) {
+    throw new ProductCategoryInUseError();
+  }
+  const result = await prisma.productCategoryCatalog.deleteMany({ where: { slug } });
   return result.count === 1;
 }
 

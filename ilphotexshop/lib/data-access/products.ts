@@ -5,6 +5,11 @@ import { Prisma, type UserRole } from "@prisma/client";
 import type { Product } from "@/data/products";
 import { AuthorizationDeniedError } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
+import { getCommissionBreakdown } from "@/lib/commerce/pricing";
+import {
+  adjustProductStock,
+  recordOpeningStock,
+} from "@/lib/data-access/inventory";
 import type { UploadedProductImage } from "@/lib/http/product-image-upload";
 import type {
   CreateProductInput,
@@ -12,13 +17,27 @@ import type {
   ListProductsQuery,
   UpdateProductInput,
 } from "@/lib/validation/products";
+import {
+  productPublicationSchema,
+  productSpecificationSchema,
+} from "@/lib/validation/products";
 
 const publicProductFields = {
   id: true,
+  sku: true,
+  brand: true,
+  subcategory: { select: { name: true, commissionBasisPoints: true } },
   name: true,
   nameFr: true,
   nameRw: true,
+  description: true,
+  warranty: true,
+  specifications: true,
+  returnPolicy: true,
   category: true,
+  categoryInfo: {
+    select: { name: true, commissionBasisPoints: true },
+  },
   price: true,
   previousPrice: true,
   rating: true,
@@ -31,6 +50,10 @@ const publicProductFields = {
   location: true,
   stockQuantity: true,
   isFeatured: true,
+  uploadedImages: {
+    select: { id: true, sortOrder: true },
+    orderBy: { sortOrder: "asc" },
+  },
   ownerId: true,
   owner: { select: { phone: true } },
 } as const;
@@ -39,12 +62,18 @@ const managedProductFields = {
   ...publicProductFields,
   isPublished: true,
   moderationStatus: true,
+  scheduledAt: true,
   moderationReason: true,
   moderatedAt: true,
   moderatedById: true,
+  lowStockThreshold: true,
   createdAt: true,
   updatedAt: true,
 } as const;
+
+type PublicProductRecord = Prisma.ProductGetPayload<{
+  select: typeof publicProductFields;
+}>;
 
 type ProductActor = {
   id: string;
@@ -80,6 +109,108 @@ export class ProductImageUploadRequiredError extends Error {
   }
 }
 
+export class InvalidProductSubcategoryError extends Error {
+  constructor() {
+    super("Choose an active subcategory that belongs to the selected category");
+    this.name = "InvalidProductSubcategoryError";
+  }
+}
+
+export class InvalidProductCategoryError extends Error {
+  constructor() {
+    super("Choose a valid product category");
+    this.name = "InvalidProductCategoryError";
+  }
+}
+
+export class InvalidProductScheduleError extends Error {
+  constructor() {
+    super("Publication time must be in the future");
+    this.name = "InvalidProductScheduleError";
+  }
+}
+
+export function isProductSkuUniqueConstraintError(error: unknown) {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== "P2002"
+  ) {
+    return false;
+  }
+  const target = error.meta?.target;
+  return Array.isArray(target)
+    ? target.includes("sku")
+    : typeof target === "string" && target.toLowerCase().includes("sku");
+}
+
+type ProductPublication = ReturnType<typeof productPublicationSchema.parse>;
+type ProductImageChange =
+  | { type: "keep" }
+  | { type: "url"; url: string }
+  | { type: "upload"; images: UploadedProductImage[] };
+
+function getProductMutationData<
+  T extends { specifications?: { name: string; value: string }[] | null },
+>(input: T) {
+  const { specifications, ...fields } = input;
+  return {
+    ...fields,
+    ...(specifications === undefined
+      ? {}
+      : {
+          specifications:
+            specifications === null ? Prisma.DbNull : specifications,
+        }),
+  };
+}
+
+function getPublicationData(publication: ProductPublication) {
+  if (publication.mode === "schedule") {
+    const scheduledAt = publication.scheduledAt
+      ? new Date(publication.scheduledAt)
+      : null;
+    if (!scheduledAt || scheduledAt.getTime() <= Date.now()) {
+      throw new InvalidProductScheduleError();
+    }
+    return {
+      isPublished: false,
+      moderationStatus: "pending" as const,
+      scheduledAt,
+    };
+  }
+  return {
+    isPublished: false,
+    moderationStatus: publication.mode === "draft" ? ("draft" as const) : ("pending" as const),
+    scheduledAt: null,
+  };
+}
+
+async function assertActiveSubcategory(
+  transaction: Prisma.TransactionClient,
+  subcategoryId: string | null | undefined,
+  category: CreateProductMetadataInput["category"],
+) {
+  if (!subcategoryId) return;
+  const subcategory = await transaction.productSubcategory.findUnique({
+    where: { id: subcategoryId },
+    select: { category: true, isActive: true },
+  });
+  if (!subcategory || !subcategory.isActive || subcategory.category !== category) {
+    throw new InvalidProductSubcategoryError();
+  }
+}
+
+async function assertProductCategory(
+  transaction: Prisma.TransactionClient,
+  category: string,
+) {
+  const found = await transaction.productCategoryCatalog.findUnique({
+    where: { slug: category },
+    select: { slug: true },
+  });
+  if (!found) throw new InvalidProductCategoryError();
+}
+
 function assertCanManageProducts(actor: ProductActor) {
   if (
     actor.role !== "seller" &&
@@ -102,6 +233,48 @@ function getProductOrder(sort: ListProductsQuery["sort"]) {
   return { createdAt: "desc" as const };
 }
 
+async function getCustomerPriceProductIds(
+  sort: "price-low" | "price-high",
+  q: string,
+  category: ListProductsQuery["category"],
+  limit: number,
+  offset: number,
+) {
+  const filters = [Prisma.sql`p."isPublished" = true`];
+  if (category) filters.push(Prisma.sql`p."category" = ${category}`);
+  const search = q.trim().replace(/[\\%_]/g, "\\$&");
+  if (search) {
+    const pattern = `%${search}%`;
+    filters.push(Prisma.sql`(
+      p."name" ILIKE ${pattern} OR
+      COALESCE(p."nameFr", '') ILIKE ${pattern} OR
+      COALESCE(p."nameRw", '') ILIKE ${pattern} OR
+      COALESCE(p."sku", '') ILIKE ${pattern} OR
+      COALESCE(p."brand", '') ILIKE ${pattern} OR
+      p."seller" ILIKE ${pattern} OR
+      p."location" ILIKE ${pattern}
+    )`);
+  }
+  const direction = sort === "price-low" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+  const rows = await prisma.$queryRaw<{ id: string }[]>(
+    Prisma.sql`
+      SELECT p."id"
+      FROM "Product" p
+      JOIN "ProductCategoryCatalog" c ON c."slug" = p."category"
+      LEFT JOIN "ProductSubcategory" s ON s."id" = p."subcategoryId"
+      WHERE ${Prisma.join(filters, " AND ")}
+      ORDER BY
+        (p."price" + CEIL(
+          p."price" * COALESCE(s."commissionBasisPoints", c."commissionBasisPoints", 200) / 10000.0
+        )) ${direction},
+        p."id" ASC
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `,
+  );
+  return rows.map(({ id }) => id);
+}
+
 function getSearchFilter(q: string, category?: ListProductsQuery["category"]) {
   const search = q.trim();
   return {
@@ -112,6 +285,8 @@ function getSearchFilter(q: string, category?: ListProductsQuery["category"]) {
             { name: { contains: search, mode: "insensitive" as const } },
             { nameFr: { contains: search, mode: "insensitive" as const } },
             { nameRw: { contains: search, mode: "insensitive" as const } },
+            { sku: { contains: search, mode: "insensitive" as const } },
+            { brand: { contains: search, mode: "insensitive" as const } },
             { seller: { contains: search, mode: "insensitive" as const } },
             { location: { contains: search, mode: "insensitive" as const } },
           ],
@@ -135,18 +310,70 @@ export async function getPublishedProducts({
     ...getSearchFilter(q, category),
   };
 
-  const [products, total] = await prisma.$transaction([
-    prisma.product.findMany({
-      where,
-      select: publicProductFields,
-      orderBy: getProductOrder(sort),
-      take: limit,
-      skip: offset,
-    }),
-    prisma.product.count({ where }),
-  ]);
+  let products: PublicProductRecord[];
+  let total: number;
+  if (sort === "price-low" || sort === "price-high") {
+    const [ids, count] = await Promise.all([
+      getCustomerPriceProductIds(sort, q, category, limit, offset),
+      prisma.product.count({ where }),
+    ]);
+    const rows = ids.length
+      ? await prisma.product.findMany({
+          where: { id: { in: ids } },
+          select: publicProductFields,
+        })
+      : [];
+    const byId = new Map(rows.map((product) => [product.id, product]));
+    products = ids.flatMap((id) => {
+      const product = byId.get(id);
+      return product ? [product] : [];
+    });
+    total = count;
+  } else {
+    [products, total] = await prisma.$transaction([
+      prisma.product.findMany({
+        where,
+        select: publicProductFields,
+        orderBy: getProductOrder(sort),
+        take: limit,
+        skip: offset,
+      }),
+      prisma.product.count({ where }),
+    ]);
+  }
 
-  return { products, total };
+  return {
+    products: products.map(({ categoryInfo, ...product }) => {
+      const pricing = getCommissionBreakdown(
+        product.price,
+        categoryInfo.commissionBasisPoints,
+        product.subcategory?.commissionBasisPoints ?? null,
+      );
+      const previousPrice =
+        product.previousPrice === null
+          ? null
+          : getCommissionBreakdown(
+              product.previousPrice,
+              categoryInfo.commissionBasisPoints,
+              product.subcategory?.commissionBasisPoints ?? null,
+            ).customerPrice;
+      return {
+        ...product,
+        price: pricing.customerPrice,
+        basePrice: pricing.basePrice,
+        commissionAmount: pricing.commissionAmount,
+        previousPrice,
+        categoryLabel: categoryInfo.name,
+        subcategory: product.subcategory?.name ?? null,
+        images: product.uploadedImages,
+        specifications:
+          product.specifications === null
+            ? null
+            : productSpecificationSchema.parse(product.specifications),
+      };
+    }),
+    total,
+  };
 }
 
 export async function getManagedProducts(
@@ -174,55 +401,73 @@ export async function getManagedProducts(
 export async function createSellerProduct(
   seller: ProductActor,
   input: CreateProductInput,
+  publication: ProductPublication = { mode: "review", scheduledAt: null },
 ) {
   if (seller.role !== "seller") throw new AuthorizationDeniedError();
 
-  return prisma.product.create({
-    data: {
-      ...input,
-      seller: seller.name,
-      ownerId: seller.id,
-      isPublished: false,
-      moderationStatus: "pending",
-      moderationReason: null,
-      moderatedAt: null,
-      moderatedById: null,
-    },
-    select: managedProductFields,
+  return prisma.$transaction(async (transaction) => {
+    await assertProductCategory(transaction, input.category);
+    await assertActiveSubcategory(transaction, input.subcategoryId, input.category);
+    const product = await transaction.product.create({
+      data: {
+        ...getProductMutationData(input),
+        ...getPublicationData(publication),
+        seller: seller.name,
+        ownerId: seller.id,
+        moderationReason: null,
+        moderatedAt: null,
+        moderatedById: null,
+      },
+      select: managedProductFields,
+    });
+    await recordOpeningStock(transaction, product, seller.id);
+    return product;
   });
 }
 
-export async function createSellerProductWithImage(
+export async function createSellerProductWithImages(
   seller: ProductActor,
   input: CreateProductMetadataInput,
-  uploadedImage: UploadedProductImage,
+  uploadedImages: UploadedProductImage[],
+  publication: ProductPublication = { mode: "review", scheduledAt: null },
 ) {
   if (seller.role !== "seller") throw new AuthorizationDeniedError();
 
   const productId = randomUUID();
-  const imageId = randomUUID();
-  const image = `/api/products/images/${imageId}`;
+  const imageIds = uploadedImages.map(() => randomUUID());
+  const image = `/api/products/images/${imageIds[0]}`;
 
   return prisma.$transaction(async (transaction) => {
+    await assertProductCategory(transaction, input.category);
+    await assertActiveSubcategory(transaction, input.subcategoryId, input.category);
     await transaction.product.create({
       data: {
         id: productId,
-        ...input,
+        ...getProductMutationData(input),
+        ...getPublicationData(publication),
         image,
         seller: seller.name,
         ownerId: seller.id,
-        isPublished: false,
-        moderationStatus: "pending",
       },
       select: { id: true },
     });
-    await transaction.productImage.create({
-      data: {
-        id: imageId,
+    await recordOpeningStock(
+      transaction,
+      {
+        id: productId,
+        name: input.name,
+        stockQuantity: input.stockQuantity,
+      },
+      seller.id,
+    );
+    await transaction.productImage.createMany({
+      data: uploadedImages.map((uploadedImage, sortOrder) => ({
+        id: imageIds[sortOrder],
         productId,
         imageData: new Uint8Array(uploadedImage.imageData),
         mimeType: uploadedImage.mimeType,
-      },
+        sortOrder,
+      })),
     });
     return transaction.product.findUniqueOrThrow({
       where: { id: productId },
@@ -262,27 +507,26 @@ export async function updateManagedProduct(
   actor: ProductActor,
   id: string,
   input: UpdateProductInput,
-  uploadedImage?: UploadedProductImage,
-  requireImageUpload = false,
+  imageChange?: ProductImageChange,
+  publication: ProductPublication = { mode: "review", scheduledAt: null },
 ) {
   const where = { id, ...getOwnerFilter(actor) };
   return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Product" WHERE "id" = ${id} FOR UPDATE`,
+    );
     const current = await transaction.product.findFirst({
       where,
-      select: { price: true, previousPrice: true, image: true },
+      select: {
+        price: true,
+        previousPrice: true,
+        stockQuantity: true,
+        image: true,
+        category: true,
+        subcategoryId: true,
+      },
     });
     if (!current) return null;
-
-    const currentImageId = current.image.match(
-      /^\/api\/products\/images\/([a-f0-9-]{36})$/i,
-    )?.[1];
-    if (
-      requireImageUpload &&
-      !uploadedImage &&
-      !currentImageId
-    ) {
-      throw new ProductImageUploadRequiredError();
-    }
 
     const nextPrice = input.price ?? current.price;
     const nextPreviousPrice =
@@ -293,19 +537,40 @@ export async function updateManagedProduct(
       throw new InvalidProductPricingError();
     }
 
-    const imageId = uploadedImage ? randomUUID() : null;
+    const nextCategory = input.category ?? current.category;
+    if (nextCategory !== current.category) {
+      await assertProductCategory(transaction, nextCategory);
+    }
+    const nextSubcategoryId =
+      input.subcategoryId === undefined
+        ? current.subcategoryId
+        : input.subcategoryId;
+    if (
+      nextSubcategoryId !== current.subcategoryId ||
+      nextCategory !== current.category
+    ) {
+      await assertActiveSubcategory(transaction, nextSubcategoryId, nextCategory);
+    }
+
+    const change =
+      imageChange ??
+      (input.image ? { type: "url" as const, url: input.image } : { type: "keep" as const });
+    const { stockQuantity: requestedStock, ...productInput } = input;
+    const imageIds =
+      change.type === "upload" ? change.images.map(() => randomUUID()) : [];
     const result = await transaction.product.updateMany({
       where,
       data: {
-        ...input,
-        ...(imageId
-          ? { image: `/api/products/images/${imageId}` }
+        ...getProductMutationData(productInput),
+        ...(change.type === "url" ? { image: change.url } : {}),
+        ...(change.type === "upload" && change.images.length
+          ? { image: `/api/products/images/${imageIds[0]}` }
           : {}),
         ...(actor.role === "seller" ? { isPublished: false } : {}),
         ...(actor.role === "seller" ? { isFeatured: false } : {}),
         ...(actor.role === "seller"
           ? {
-              moderationStatus: "pending" as const,
+              ...getPublicationData(publication),
               moderationReason: null,
               moderatedAt: null,
               moderatedById: null,
@@ -314,22 +579,31 @@ export async function updateManagedProduct(
       },
     });
     if (result.count === 0) return null;
+    if (requestedStock !== undefined && requestedStock !== current.stockQuantity) {
+      await adjustProductStock(transaction, {
+        productId: id,
+        actorId: actor.id,
+        quantity: requestedStock,
+        reason: "Stock quantity changed during product update",
+      });
+    }
 
-    if (imageId && uploadedImage) {
-      await transaction.productImage.create({
-        data: {
-          id: imageId,
+    if (change.type === "upload" && change.images.length) {
+      await transaction.productImage.createMany({
+        data: change.images.map((uploadedImage, sortOrder) => ({
+          id: imageIds[sortOrder],
           productId: id,
           imageData: new Uint8Array(uploadedImage.imageData),
           mimeType: uploadedImage.mimeType,
-        },
+          sortOrder,
+        })),
       });
     }
-    if (uploadedImage || input.image) {
+    if (change.type === "url" || (change.type === "upload" && change.images.length)) {
       const oldImages = await transaction.productImage.findMany({
         where: {
           productId: id,
-          ...(imageId ? { id: { not: imageId } } : {}),
+          ...(imageIds.length ? { id: { notIn: imageIds } } : {}),
         },
         select: { id: true },
       });
@@ -370,7 +644,13 @@ export async function getProductImageRecord(id: string) {
       imageData: true,
       mimeType: true,
       product: {
-        select: { ownerId: true, isPublished: true, image: true },
+        select: {
+          ownerId: true,
+          isPublished: true,
+          moderationStatus: true,
+          scheduledAt: true,
+          image: true,
+        },
       },
     },
   });
@@ -387,6 +667,50 @@ export async function isProductImageUsedByOrder(
     },
     select: { id: true },
   });
+}
+
+export async function getActiveMerchantProductSubcategories() {
+  return prisma.productSubcategory.findMany({
+    where: { isActive: true },
+    select: { id: true, category: true, name: true },
+    orderBy: [{ category: "asc" }, { name: "asc" }],
+  });
+}
+
+export async function getActiveProductCategories() {
+  return prisma.productCategoryCatalog.findMany({
+    select: { slug: true, name: true },
+    orderBy: { name: "asc" },
+  });
+}
+
+export async function publishDueScheduledProducts(now = new Date()) {
+  const result = await prisma.product.updateMany({
+    where: {
+      moderationStatus: "scheduled",
+      isPublished: false,
+      scheduledAt: { lte: now },
+      OR: [
+        { ownerId: null },
+        {
+          owner: {
+            is: {
+              isSuspended: false,
+              isAnonymized: false,
+              archivedAt: null,
+            },
+          },
+        },
+      ],
+    },
+    data: {
+      isPublished: true,
+      moderationStatus: "published",
+      scheduledAt: null,
+      moderationReason: null,
+    },
+  });
+  return result.count;
 }
 
 export async function setProductPublishedState(
@@ -421,6 +745,7 @@ export async function setProductPublishedState(
       where: { id },
       data: {
         isPublished,
+        scheduledAt: null,
         ...(!isPublished ? { isFeatured: false } : {}),
         ...(isPublished
           ? { moderationStatus: "published" as const }
@@ -445,6 +770,7 @@ export async function moderateProductAsSuperAdmin(
         ownerId: true,
         isPublished: true,
         moderationStatus: true,
+        scheduledAt: true,
       },
     });
     if (!product) return null;
@@ -464,12 +790,17 @@ export async function moderateProductAsSuperAdmin(
       }
     }
 
+    const shouldSchedule =
+      action === "approve" &&
+      product.scheduledAt !== null &&
+      product.scheduledAt.getTime() > Date.now();
     await transaction.product.update({
       where: { id },
       data: action === "approve"
         ? {
-            isPublished: true,
-            moderationStatus: "published",
+            isPublished: !shouldSchedule,
+            moderationStatus: shouldSchedule ? "scheduled" : "published",
+            scheduledAt: shouldSchedule ? product.scheduledAt : null,
             moderationReason: null,
             moderatedAt: new Date(),
             moderatedById: actorId,
@@ -478,6 +809,7 @@ export async function moderateProductAsSuperAdmin(
             isPublished: false,
             isFeatured: false,
             moderationStatus: "rejected",
+            scheduledAt: null,
             moderationReason: reason!,
             moderatedAt: new Date(),
             moderatedById: actorId,

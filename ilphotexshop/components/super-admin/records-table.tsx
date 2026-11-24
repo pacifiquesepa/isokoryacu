@@ -11,7 +11,6 @@ import type { SuperAdminRecordList } from "@/lib/data-access/super-admin-records
 import SuperAdminRecordRowActions from "@/components/super-admin/record-row-actions";
 import SuperAdminCsvExportButton from "@/components/super-admin/csv-export-button";
 import { SUPER_ADMIN_RECORD_PAGE_SIZES } from "@/lib/data-access/super-admin-records";
-import { productCategorySchema } from "@/lib/validation/products";
 
 type SuperAdminRecordsTableProps = {
   data: SuperAdminRecordList;
@@ -315,9 +314,9 @@ export default function SuperAdminRecordsTable({
                 name="category"
               >
                 <option value="">All categories</option>
-                {productCategorySchema.options.map((option) => (
-                  <option key={option} value={option}>
-                    {option[0].toUpperCase() + option.slice(1)}
+                {data.categories?.map((option) => (
+                  <option key={option.slug} value={option.slug}>
+                    {option.name}
                   </option>
                 ))}
               </select>

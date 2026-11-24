@@ -226,7 +226,7 @@ export default function SuperAdminRecordActions({
           onClick={handleShare}
           type="button"
         >
-          Share record
+          Share PDF
         </button>
       </div>
       <p aria-live="polite" className="super-admin-action-message">

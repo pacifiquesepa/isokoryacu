@@ -1,11 +1,31 @@
 import { z } from "zod";
 
-export const productCategorySchema = z.enum([
-  "technology",
-  "fashion",
-  "home",
-  "beauty",
-]);
+export const productCategorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+
+export const productCategoryCreateSchema = z
+  .object({
+    slug: productCategorySchema,
+    name: z.string().trim().min(2).max(120),
+    description: z.string().trim().max(500).transform((value) => value || null).nullable().optional(),
+    commissionBasisPoints: z.number().int().min(0).max(10_000).nullable().optional(),
+    lowStockThreshold: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  })
+  .strict();
+
+export const productCategoryUpdateSchema = z
+  .object({
+    slug: productCategorySchema,
+    name: z.string().trim().min(2).max(120),
+    description: z.string().trim().max(500).transform((value) => value || null).nullable().optional(),
+    commissionBasisPoints: z.number().int().min(0).max(10_000).nullable().optional(),
+    lowStockThreshold: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  })
+  .strict();
 
 export const listProductsQuerySchema = z
   .object({
@@ -32,10 +52,45 @@ const productImageSchema = z
     );
   }, "Image URL must use the approved HTTPS image host");
 
+export const productSpecificationSchema = z
+  .array(
+    z
+      .object({
+        name: z.string().trim().min(1).max(80),
+        value: z.string().trim().min(1).max(500),
+      })
+      .strict(),
+  )
+  .max(30);
+
+const optionalText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .transform((value) => value || null)
+    .nullable()
+    .optional();
+
 const productFieldsSchema = z.object({
+  sku: z
+    .string()
+    .trim()
+    .min(2)
+    .max(64)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+    .transform((value) => value.toUpperCase())
+    .nullable()
+    .optional(),
+  brand: optionalText(120),
+  subcategoryId: z.string().trim().min(1).max(100).nullable().optional(),
   name: z.string().trim().min(2).max(160),
   nameFr: z.string().trim().min(1).max(160).nullable().optional(),
   nameRw: z.string().trim().min(1).max(160).nullable().optional(),
+  description: optionalText(10000),
+  warranty: optionalText(1000),
+  specifications: productSpecificationSchema.nullable().optional(),
+  returnPolicy: optionalText(2000),
   category: productCategorySchema,
   price: z.number().int().min(1).max(1_000_000_000),
   previousPrice: z
@@ -48,6 +103,7 @@ const productFieldsSchema = z.object({
   image: productImageSchema,
   location: z.string().trim().min(2).max(120),
   stockQuantity: z.number().int().min(0).max(1_000_000),
+  lowStockThreshold: z.number().int().min(0).max(1_000_000).nullable().optional(),
 });
 
 export const createProductSchema = productFieldsSchema
@@ -112,6 +168,29 @@ export const productScheduleSchema = z
   })
   .strict();
 
+export const productPublicationSchema = z
+  .object({
+    mode: z.enum(["draft", "review", "schedule"]),
+    scheduledAt: z.string().datetime().nullable(),
+  })
+  .strict()
+  .superRefine(({ mode, scheduledAt }, context) => {
+    if (mode === "schedule" && !scheduledAt) {
+      context.addIssue({
+        code: "custom",
+        message: "Choose a publication date and time",
+        path: ["scheduledAt"],
+      });
+    }
+    if (mode !== "schedule" && scheduledAt) {
+      context.addIssue({
+        code: "custom",
+        message: "A publication date is only valid for a scheduled listing",
+        path: ["scheduledAt"],
+      });
+    }
+  });
+
 export const productSubcategorySchema = z
   .object({
     id: z.string().trim().min(1).max(100).optional(),
@@ -123,8 +202,13 @@ export const productSubcategorySchema = z
       .min(2)
       .max(180)
       .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+    commissionBasisPoints: z.number().int().min(0).max(10_000).nullable().optional(),
   })
   .strict();
+
+export const createProductSubcategorySchema = productSubcategorySchema.omit({
+  id: true,
+});
 
 export const productReportSchema = z
   .object({

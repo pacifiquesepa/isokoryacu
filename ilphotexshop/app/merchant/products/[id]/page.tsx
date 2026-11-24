@@ -46,10 +46,22 @@ async function MerchantProductDetailContent({
 
   const fields = [
     { label: "Product ID", value: product.id },
+    { label: "SKU", value: product.sku ?? "Not provided" },
+    { label: "Brand", value: product.brand ?? "Not provided" },
     { label: "Name", value: product.name },
     { label: "Kinyarwanda name", value: product.nameRw ?? "Not provided" },
     { label: "French name", value: product.nameFr ?? "Not provided" },
-    { label: "Category", value: product.category },
+    { label: "Category", value: product.categoryInfo.name },
+    { label: "Subcategory", value: product.subcategory?.name ?? "Not provided" },
+    { label: "Description", value: product.description ?? "Not provided" },
+    { label: "Warranty", value: product.warranty ?? "Not provided" },
+    {
+      label: "Specifications",
+      value: product.specifications?.length
+        ? product.specifications.map(({ name, value }) => `${name}: ${value}`).join("; ")
+        : "Not provided",
+    },
+    { label: "Return policy", value: product.returnPolicy ?? "Not provided" },
     { label: "Price", value: `${numberFormat.format(product.price)} RWF` },
     {
       label: "Previous price",
@@ -61,7 +73,23 @@ async function MerchantProductDetailContent({
     { label: "Stock", value: numberFormat.format(product.stockQuantity) },
     {
       label: "Storefront status",
-      value: product.isPublished ? "Published" : "Unpublished",
+      value: product.isPublished
+        ? "Published"
+        : product.moderationStatus === "pending"
+          ? "Pending review"
+          : product.moderationStatus === "scheduled"
+            ? "Scheduled"
+            : product.moderationStatus === "rejected"
+              ? "Rejected"
+              : product.moderationStatus === "hidden"
+                ? "Hidden"
+                : "Draft",
+    },
+    {
+      label: "Scheduled publication",
+      value: product.scheduledAt
+        ? dateFormat.format(product.scheduledAt)
+        : "Not scheduled",
     },
     { label: "Added", value: dateFormat.format(product.createdAt) },
   ];
@@ -74,7 +102,7 @@ async function MerchantProductDetailContent({
             <Link href="/merchant/products">Products</Link> / Product details
           </div>
           <h1>{product.name}</h1>
-          <p>Product record · {product.category}</p>
+          <p>Product record · {product.categoryInfo.name}</p>
         </div>
         <div className="merchant-record-heading-actions">
           <Link
@@ -100,14 +128,30 @@ async function MerchantProductDetailContent({
           </div>
         </header>
         <div className="merchant-record-product">
-          <Image
-            alt={product.name}
-            className="merchant-record-product-image"
-            height={160}
-            src={product.image}
-            unoptimized
-            width={160}
-          />
+          <div className="merchant-record-image-gallery">
+            {product.uploadedImages.length ? (
+              product.uploadedImages.map((image, index) => (
+                <Image
+                  alt={index === 0 ? product.name : `${product.name} photo ${index + 1}`}
+                  className="merchant-record-product-image"
+                  height={160}
+                  key={image.id}
+                  src={`/api/products/images/${image.id}`}
+                  unoptimized
+                  width={160}
+                />
+              ))
+            ) : (
+              <Image
+                alt={product.name}
+                className="merchant-record-product-image"
+                height={160}
+                src={product.image}
+                unoptimized
+                width={160}
+              />
+            )}
+          </div>
           <span className={`merchant-status is-${product.isPublished ? "published" : "unpublished"}`}>
             {product.isPublished ? "Published" : "Unpublished"}
           </span>

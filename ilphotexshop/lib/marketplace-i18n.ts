@@ -16,6 +16,7 @@ const english = {
   signIn: "Sign in",
   signOut: "Sign out",
   myOrders: "My orders",
+  myAccount: "My account",
   merchantWorkspace: "Merchant workspace",
   adminWorkspace: "Admin workspace",
   administrator: "Administrator",
@@ -103,9 +104,9 @@ const english = {
   browseProducts: "Browse products",
   subtotal: "Subtotal",
   taxNote: "Delivery costs and payment are handled separately.",
-  continueCheckout: "Place order",
+  continueCheckout: "Continue to checkout",
   checkoutUnavailable:
-    "Placing an order does not collect payment. Payment is handled separately.",
+    "Choose delivery and payment options at checkout.",
   checkoutDeliveryHeading: "Delivery details",
   deliveryName: "Recipient full name",
   deliveryPhone: "Phone number",
@@ -146,6 +147,13 @@ const english = {
   productDescription:
     "This item is offered by a seller on ILPhotoX Shop. Add it to your cart to continue shopping.",
   closeProductDetails: "Close product details",
+  productBrand: "Brand",
+  productSku: "SKU",
+  productSubcategory: "Subcategory",
+  productSpecifications: "Specifications",
+  productWarranty: "Warranty",
+  productReturnPolicy: "Return policy",
+  productGallery: "Product photos",
   soldBy: "Sold by",
   accountUnavailable: "Sign-in and registration will be added in a later step.",
   productPrice: "Price",
@@ -166,6 +174,7 @@ const translations: Record<Language, Record<MessageKey, string>> = {
     signIn: "Se connecter",
     signOut: "Se déconnecter",
     myOrders: "Mes commandes",
+    myAccount: "Mon compte",
     merchantWorkspace: "Espace vendeur",
     adminWorkspace: "Espace administrateur",
     administrator: "Administrateur",
@@ -254,9 +263,9 @@ const translations: Record<Language, Record<MessageKey, string>> = {
     browseProducts: "Voir les produits",
     subtotal: "Sous-total",
     taxNote: "La livraison et le paiement sont traités séparément.",
-    continueCheckout: "Passer la commande",
+    continueCheckout: "Continuer vers le paiement",
     checkoutUnavailable:
-      "La création d’une commande ne déclenche aucun paiement. Le paiement est traité séparément.",
+      "Choisissez la livraison et le paiement lors du passage en caisse.",
     checkoutDeliveryHeading: "Informations de livraison",
     deliveryName: "Nom complet du destinataire",
     deliveryPhone: "Numéro de téléphone",
@@ -303,6 +312,13 @@ const translations: Record<Language, Record<MessageKey, string>> = {
     productDescription:
       "Cet article est proposé par un vendeur sur ILPhotoX Shop. Ajoutez-le à votre panier pour continuer.",
     closeProductDetails: "Fermer les détails du produit",
+    productBrand: "Marque",
+    productSku: "Référence",
+    productSubcategory: "Sous-catégorie",
+    productSpecifications: "Caractéristiques",
+    productWarranty: "Garantie",
+    productReturnPolicy: "Politique de retour",
+    productGallery: "Photos du produit",
     soldBy: "Vendu par",
     accountUnavailable: "La connexion et l’inscription seront ajoutées ultérieurement.",
     productPrice: "Prix",
@@ -318,6 +334,7 @@ const translations: Record<Language, Record<MessageKey, string>> = {
     signIn: "Injira",
     signOut: "Sohoka",
     myOrders: "Amateka y’ibyo natumije",
+    myAccount: "Konti yanjye",
     merchantWorkspace: "Urubuga rw’umucuruzi",
     adminWorkspace: "Urubuga rw’ubuyobozi",
     administrator: "Umuyobozi",
@@ -405,9 +422,9 @@ const translations: Record<Language, Record<MessageKey, string>> = {
     browseProducts: "Reba ibicuruzwa",
     subtotal: "Igiteranyo",
     taxNote: "Kugeza ibicuruzwa no kwishyura bikorerwa ukwabyo.",
-    continueCheckout: "Ohereza order",
+    continueCheckout: "Komeza ku kwishyura",
     checkoutUnavailable:
-      "Kohereza order ntibivuze ko wishyuye. Kwishyura bikorerwa ukwabyo.",
+      "Hitamo uko uzahabwa ibicuruzwa n’uko uzishyura mu kurangiza kugura.",
     checkoutDeliveryHeading: "Amakuru yo kugeza ibicuruzwa",
     deliveryName: "Amazina y’uhabwa ibicuruzwa",
     deliveryPhone: "Nimero ya telefoni",
@@ -452,6 +469,13 @@ const translations: Record<Language, Record<MessageKey, string>> = {
     productDescription:
       "Iki gicuruzwa kigurishwa n’umucuruzi uri kuri ILPhotoX Shop. Ongera mu gatebo kugira ngo ukomeze kugura.",
     closeProductDetails: "Funga amakuru y’igicuruzwa",
+    productBrand: "Brand",
+    productSku: "SKU",
+    productSubcategory: "Icyiciro cyihariye",
+    productSpecifications: "Ibiranga igicuruzwa",
+    productWarranty: "Garanti",
+    productReturnPolicy: "Amategeko yo gusubiza igicuruzwa",
+    productGallery: "Amafoto y’igicuruzwa",
     soldBy: "Igurishwa na",
     accountUnavailable: "Kwiyandikisha no kwinjira bizashyirwamo mu cyiciro gikurikira.",
     productPrice: "Igiciro",
@@ -547,10 +571,16 @@ export function translateProduct(
       : language === "rw"
         ? product.badgeRw
         : product.badge;
+  const defaultCategoryName = categoryTranslations[product.category]?.en;
 
   return {
     name: localizedName || fallback?.name || product.name,
-    category: categoryTranslations[product.category]?.[language] || product.category,
+    category:
+        (product.categoryLabel && product.categoryLabel !== defaultCategoryName
+          ? product.categoryLabel
+          : categoryTranslations[product.category]?.[language]) ||
+      product.categoryLabel ||
+      product.category,
     badge: localizedBadge || fallback?.badge || product.badge || undefined,
   };
 }

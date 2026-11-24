@@ -7,6 +7,7 @@ import { requireUserRole } from "@/lib/authorization";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import { rateLimitResponse } from "@/lib/http/rate-limit-response";
+import { dispatchOrderNotificationsSafely } from "@/lib/notifications/order-notification-delivery";
 import { checkAdminOrderWriteLimit } from "@/lib/rate-limit";
 import {
   orderIdSchema,
@@ -38,10 +39,15 @@ export async function PATCH(
     const order = await updateOrderStatusAsAdmin(
       parsedId.data,
       body.data.status,
+      admin.id,
     );
     if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
+    const notificationDelivery = await dispatchOrderNotificationsSafely(
+      order.id,
+      body.data.status,
+    );
 
-    return Response.json(order, {
+    return Response.json({ ...order, notificationDelivery }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

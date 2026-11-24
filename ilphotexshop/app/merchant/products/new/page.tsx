@@ -4,6 +4,10 @@ import Link from "next/link";
 import { ChevronLeft, PackagePlus } from "lucide-react";
 import MerchantProductForm from "@/components/merchant/product-form";
 import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  getActiveMerchantProductSubcategories,
+  getActiveProductCategories,
+} from "@/lib/data-access/products";
 
 export const metadata: Metadata = {
   title: "Add product | Merchant portal",
@@ -19,6 +23,10 @@ export default function NewMerchantProductPage() {
 
 async function NewMerchantProductContent() {
   await requireMerchantPageUser();
+  const [subcategories, categories] = await Promise.all([
+    getActiveMerchantProductSubcategories(),
+    getActiveProductCategories(),
+  ]);
   return (
     <div className="merchant-page">
       <div className="merchant-page-heading">
@@ -27,7 +35,7 @@ async function NewMerchantProductContent() {
             <Link href="/merchant/products">Products</Link> / Add product
           </div>
           <h1>Add a product</h1>
-          <p>New listings start unpublished and need approval before appearing in the shop.</p>
+          <p>Save drafts, submit listings for approval, or schedule a future publication.</p>
         </div>
       </div>
       <section className="merchant-panel merchant-form-panel">
@@ -37,7 +45,7 @@ async function NewMerchantProductContent() {
             <p>Enter accurate details so customers can find your product.</p>
           </div>
         </div>
-        <MerchantProductForm />
+        <MerchantProductForm categories={categories} subcategories={subcategories} />
       </section>
       <Link className="merchant-back-link" href="/merchant/products">
         <ChevronLeft size={16} /> Back to products

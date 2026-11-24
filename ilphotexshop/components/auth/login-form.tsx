@@ -4,8 +4,14 @@ import Link from "next/link";
 import { getSession } from "next-auth/react";
 import { useState, type FormEvent } from "react";
 
-export default function LoginForm() {
-  const [message, setMessage] = useState("");
+export default function LoginForm({
+  passwordChanged,
+}: {
+  passwordChanged: boolean;
+}) {
+  const [message, setMessage] = useState(
+    passwordChanged ? "Password updated. Sign in with your new password." : "",
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {

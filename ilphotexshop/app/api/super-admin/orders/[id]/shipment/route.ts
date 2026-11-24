@@ -3,6 +3,7 @@ import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import { createOrderShipment } from "@/lib/data-access/super-admin-orders";
 import { orderShipmentSchema, orderIdSchema } from "@/lib/validation/orders";
+import { dispatchOrderNotificationsSafely } from "@/lib/notifications/order-notification-delivery";
 
 export async function POST(
   request: Request,
@@ -17,7 +18,11 @@ export async function POST(
     if (!body.success) return body.response;
     const shipment = await createOrderShipment(parsedId.data, body.data);
     if (!shipment) return Response.json({ error: "Order not found" }, { status: 404 });
-    return Response.json(shipment);
+    const notificationDelivery = await dispatchOrderNotificationsSafely(
+      parsedId.data,
+      body.data.status,
+    );
+    return Response.json({ ...shipment, notificationDelivery });
   } catch (error) {
     return apiErrorResponse(error, "Failed to create shipment", "Shipment could not be created");
   }

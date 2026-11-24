@@ -11,14 +11,19 @@ import {
 } from "@/lib/data-access/merchant-dashboard";
 import {
   listProductsQuerySchema,
-  productCategorySchema,
 } from "@/lib/validation/products";
+import { getActiveProductCategories } from "@/lib/data-access/products";
 
 export const metadata: Metadata = {
   title: "My products | Merchant portal",
 };
 
 const numberFormat = new Intl.NumberFormat("en-RW");
+const dateFormat = new Intl.DateTimeFormat("en-RW", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default function MerchantProductsPage({
@@ -44,7 +49,13 @@ async function MerchantProductsContent({
   ]);
   const statusValue = typeof params.status === "string" ? params.status : "all";
   const filter: MerchantProductFilter =
-    statusValue === "published" || statusValue === "unpublished"
+    statusValue === "published" ||
+    statusValue === "unpublished" ||
+    statusValue === "draft" ||
+    statusValue === "pending" ||
+    statusValue === "scheduled" ||
+    statusValue === "rejected" ||
+    statusValue === "hidden"
       ? statusValue
       : "all";
   const queryInput = {
@@ -58,11 +69,15 @@ async function MerchantProductsContent({
   const query = parsedQuery.success
     ? parsedQuery.data
     : listProductsQuerySchema.parse({});
-  const { products, total, summary } = await getMerchantProducts(
+  const [productData, categories] = await Promise.all([
+    getMerchantProducts(
     seller,
     query,
     filter,
-  );
+    ),
+    getActiveProductCategories(),
+  ]);
+  const { products, total, summary } = productData;
   const pageNumber = Math.floor(query.offset / query.limit) + 1;
   const pageCount = Math.max(1, Math.ceil(total / query.limit));
   const baseParams = new URLSearchParams();
@@ -122,12 +137,25 @@ async function MerchantProductsContent({
           </nav>
           <form action="/merchant/products" className="merchant-filter-form" method="get">
             <label>
+              <span>Listing status</span>
+              <select defaultValue={filter === "all" ? "" : filter} name="status">
+                <option value="">All statuses</option>
+                <option value="published">Published</option>
+                <option value="draft">Draft</option>
+                <option value="pending">Pending review</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="rejected">Rejected</option>
+                <option value="hidden">Hidden</option>
+                <option value="unpublished">Unpublished</option>
+              </select>
+            </label>
+            <label>
               <span>Category</span>
               <select defaultValue={query.category ?? ""} name="category">
                 <option value="">All categories</option>
-                {productCategorySchema.options.map((category) => (
-                  <option key={category} value={category}>
-                    {category[0].toUpperCase() + category.slice(1)}
+                {categories.map((category) => (
+                  <option key={category.slug} value={category.slug}>
+                    {category.name}
                   </option>
                 ))}
               </select>
@@ -142,7 +170,6 @@ async function MerchantProductsContent({
               </select>
             </label>
             {query.q && <input name="q" type="hidden" value={query.q} />}
-            {filter !== "all" && <input name="status" type="hidden" value={filter} />}
             <button className="merchant-primary-action" type="submit">Apply</button>
           </form>
         </div>
@@ -175,7 +202,10 @@ async function MerchantProductsContent({
                             unoptimized
                             width={44}
                           />
-                          <strong>{product.name}</strong>
+                          <div>
+                            <strong>{product.name}</strong>
+                            {product.sku && <small>SKU: {product.sku}</small>}
+                          </div>
                         </div>
                       </td>
                       <td>{product.category}</td>
@@ -184,8 +214,21 @@ async function MerchantProductsContent({
                       <td>{product.rating.toFixed(1)} ({product.reviewCount})</td>
                       <td>
                         <span className={`merchant-status is-${product.isPublished ? "published" : "unpublished"}`}>
-                          {product.isPublished ? "Published" : "Unpublished"}
+                          {product.isPublished
+                            ? "Published"
+                            : product.moderationStatus === "pending"
+                              ? "Pending review"
+                              : product.moderationStatus === "scheduled"
+                                ? "Scheduled"
+                                : product.moderationStatus === "rejected"
+                                  ? "Rejected"
+                                  : product.moderationStatus === "hidden"
+                                    ? "Hidden"
+                                    : "Draft"}
                         </span>
+                        {!product.isPublished && product.scheduledAt && (
+                          <small>Publish at {dateFormat.format(product.scheduledAt)} UTC</small>
+                        )}
                       </td>
                       <td><MerchantProductActions id={product.id} /></td>
                     </tr>

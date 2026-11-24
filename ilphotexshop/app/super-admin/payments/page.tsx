@@ -38,7 +38,8 @@ export default async function SuperAdminPaymentOverviewPage() {
 
       <div className="super-admin-data-note" role="note">
         These figures describe uploaded receipt proofs, not gateway transactions or settled revenue.
-        No failed-payment or payout records are currently tracked.
+        Payout requests are processed manually in{" "}
+        <Link href="/super-admin/payments/merchant-payouts">merchant payouts</Link>.
       </div>
 
       <section aria-label="Payment proof summary" className="super-admin-records-summary">

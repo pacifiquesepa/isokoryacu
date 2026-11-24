@@ -5,10 +5,17 @@ const prisma = new PrismaClient();
 
 async function main() {
   for (const product of products) {
+    const { subcategory, images, specifications, ...seedableProduct } = product;
+    void subcategory;
+    void images;
+    const seedableFields = {
+      ...seedableProduct,
+      ...(specifications == null ? {} : { specifications }),
+    };
     await prisma.product.upsert({
       where: { id: product.id },
       create: {
-        ...product,
+        ...seedableFields,
         previousPrice: product.previousPrice ?? null,
         badge: product.badge ?? null,
         badgeFr: product.badgeFr ?? null,
@@ -17,7 +24,7 @@ async function main() {
         isPublished: true,
       },
       update: {
-        ...product,
+        ...seedableFields,
         previousPrice: product.previousPrice ?? null,
         badge: product.badge ?? null,
         badgeFr: product.badgeFr ?? null,

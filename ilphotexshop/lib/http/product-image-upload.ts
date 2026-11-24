@@ -1,5 +1,7 @@
 export const maxProductImageBytes = 5 * 1024 * 1024;
-const maxProductFormBytes = maxProductImageBytes + 64 * 1024;
+export const maxProductImageCount = 3;
+const maxProductFormBytes =
+  maxProductImageBytes * maxProductImageCount + 128 * 1024;
 
 export type UploadedProductImage = {
   imageData: Uint8Array;
@@ -14,6 +16,10 @@ export type ProductImageUploadResult =
   | { ok: true; image: UploadedProductImage | null }
   | { ok: false; error: string };
 
+export type ProductImagesUploadResult =
+  | { ok: true; images: UploadedProductImage[] }
+  | { ok: false; error: string };
+
 function getTextField(form: FormData, name: string) {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
@@ -21,18 +27,40 @@ function getTextField(form: FormData, name: string) {
 
 export function getProductFormFields(form: FormData) {
   const previousPrice = getTextField(form, "previousPrice").trim();
+  const lowStockThreshold = getTextField(form, "lowStockThreshold").trim();
+  const specifications = getTextField(form, "specifications").trim();
+  let parsedSpecifications: unknown = null;
+  if (specifications) {
+    try {
+      parsedSpecifications = JSON.parse(specifications) as unknown;
+    } catch {
+      parsedSpecifications = specifications;
+    }
+  }
   return {
     imageSource: getTextField(form, "imageSource"),
     image: getTextField(form, "image").trim(),
     metadata: {
+      sku: getTextField(form, "sku").trim() || null,
+      brand: getTextField(form, "brand").trim() || null,
+      subcategoryId: getTextField(form, "subcategoryId").trim() || null,
       name: getTextField(form, "name").trim(),
       nameRw: getTextField(form, "nameRw").trim() || null,
       nameFr: getTextField(form, "nameFr").trim() || null,
+      description: getTextField(form, "description").trim() || null,
+      warranty: getTextField(form, "warranty").trim() || null,
+      specifications: parsedSpecifications,
+      returnPolicy: getTextField(form, "returnPolicy").trim() || null,
       category: getTextField(form, "category"),
       price: Number(getTextField(form, "price")),
       previousPrice: previousPrice ? Number(previousPrice) : null,
       location: getTextField(form, "location").trim(),
       stockQuantity: Number(getTextField(form, "stockQuantity")),
+      lowStockThreshold: lowStockThreshold ? Number(lowStockThreshold) : null,
+    },
+    publication: {
+      mode: getTextField(form, "publicationMode") || "review",
+      scheduledAt: getTextField(form, "scheduledAt").trim() || null,
     },
   };
 }
@@ -170,4 +198,34 @@ export async function readProductImageUpload(
   }
 
   return { ok: true, image: { imageData, mimeType } };
+}
+
+export async function readProductImageUploads(
+  values: FormDataEntryValue[],
+  required: boolean,
+): Promise<ProductImagesUploadResult> {
+  const selected = values.filter(
+    (value) => !(value instanceof File && value.size === 0 && value.name === ""),
+  );
+  if (selected.length > maxProductImageCount) {
+    return {
+      ok: false,
+      error: `Upload no more than ${maxProductImageCount} product images`,
+    };
+  }
+  if (required && selected.length === 0) {
+    return { ok: false, error: "Choose at least one product image" };
+  }
+
+  const results = await Promise.all(
+    selected.map((value) => readProductImageUpload(value, true)),
+  );
+  const invalid = results.find((result) => !result.ok);
+  if (invalid && !invalid.ok) return invalid;
+  return {
+    ok: true,
+    images: results.flatMap((result) =>
+      result.ok && result.image ? [result.image] : [],
+    ),
+  };
 }

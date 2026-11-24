@@ -154,7 +154,7 @@ async function SuperAdminFeaturedProductsContent({
                           </Link>
                         </div>
                       </td>
-                      <td>{product.seller} · {product.category}</td>
+                      <td>{product.seller} · {product.categoryInfo.name}</td>
                       <td>{currencyFormat.format(product.price)}</td>
                       <td>{numberFormat.format(product.stockQuantity)}</td>
                       <td>

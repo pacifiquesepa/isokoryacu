@@ -1,6 +1,6 @@
 import "server-only";
 
-import { OrderStatus, Prisma, ProductCategory, UserRole } from "@prisma/client";
+import { OrderStatus, Prisma, UserRole } from "@prisma/client";
 import { requireSuperAdminPageUser } from "@/lib/authorization";
 import { prisma } from "@/lib/prisma";
 import {
@@ -136,6 +136,10 @@ async function getOrdersReport(
       orderBy: { createdAt: "desc" },
       take: reportRowLimit,
     }),
+    prisma.productCategoryCatalog.findMany({
+      select: { slug: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   return {
@@ -214,6 +218,7 @@ async function getProductReport(
     outOfStockProducts,
     categoryGroups,
     bestSellers,
+    supportedProductCategories,
   ] = await prisma.$transaction([
     prisma.product.count(),
     prisma.product.count({ where: { isPublished: true } }),
@@ -237,6 +242,10 @@ async function getProductReport(
       orderBy: { _sum: { quantity: "desc" } },
       take: reportRowLimit,
     }),
+    prisma.productCategoryCatalog.findMany({
+      select: { slug: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   const productIds = bestSellers
@@ -245,7 +254,13 @@ async function getProductReport(
   const products = productIds.length
     ? await prisma.product.findMany({
         where: { id: { in: productIds } },
-        select: { id: true, category: true, stockQuantity: true, isPublished: true },
+        select: {
+          id: true,
+          category: true,
+          categoryInfo: { select: { name: true } },
+          stockQuantity: true,
+          isPublished: true,
+        },
       })
     : [];
   const productById = new Map(products.map((product) => [product.id, product]));
@@ -259,16 +274,16 @@ async function getProductReport(
     ]),
   );
   const categoryRows = supportedProductCategories.map((category) => {
-    const count = categoryCounts.get(category) ?? 0;
+    const count = categoryCounts.get(category.slug) ?? 0;
     return {
-      id: category,
-      label: category,
+      id: category.slug,
+      label: category.name,
       detail: "Catalog category",
       indicator: `${count.toLocaleString("en-RW")} products`,
       metric: totalProducts
         ? `${Math.round((count / totalProducts) * 100)}%`
         : "0%",
-      href: `/super-admin/products?category=${encodeURIComponent(category)}`,
+      href: `/super-admin/products?category=${encodeURIComponent(category.slug)}`,
     };
   });
 
@@ -313,8 +328,8 @@ async function getProductReport(
       ? ["Category", "Catalog", "Products", "Catalog share"]
       : ["Product", "Publication", "Category · stock", "Units ordered"],
     categories: supportedProductCategories.map((category) => ({
-      label: category,
-      count: categoryCounts.get(category) ?? 0,
+      label: category.name,
+      count: categoryCounts.get(category.slug) ?? 0,
     })),
     rows: isCategoryReport
       ? categoryRows
@@ -327,7 +342,7 @@ async function getProductReport(
           id: item.productId,
           label: item.productName,
           detail: product.isPublished ? "Published" : "Unpublished",
-          indicator: `${product.category} · ${product.stockQuantity} in stock`,
+          indicator: `${product.categoryInfo.name} · ${product.stockQuantity} in stock`,
           metric: `${(item._sum?.quantity ?? 0).toLocaleString("en-RW")} units`,
           href: `/super-admin/records/products/${encodeURIComponent(item.productId)}`,
         },
@@ -567,5 +582,3 @@ export async function getSuperAdminAnalyticsReport(
   }
   return null;
 }
-
-export const supportedProductCategories = Object.values(ProductCategory);

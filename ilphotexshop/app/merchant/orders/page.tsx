@@ -100,7 +100,7 @@ async function MerchantOrdersContent({
               <tbody>
                 {result.orders.map((order) => {
                   const sellerSubtotal = order.items.reduce(
-                    (sum, item) => sum + item.lineTotal,
+                    (sum, item) => sum + item.merchantLineTotal,
                     0,
                   );
                   return (

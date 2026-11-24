@@ -24,6 +24,7 @@ export default function SuperAdminPaymentAccountForm({
     try {
       const response = await fetch("/api/super-admin/payments/accounts", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type,
@@ -36,6 +37,11 @@ export default function SuperAdminPaymentAccountForm({
       const result = (await response.json().catch(() => null)) as
         | { error?: string }
         | null;
+      if (response.status === 401) {
+        throw new Error(
+          "Authentication required. Refresh the page and sign in again.",
+        );
+      }
       if (!response.ok) {
         throw new Error(result?.error || "Payment account could not be saved.");
       }
