@@ -94,7 +94,11 @@ export default function LoginForm({
           Sign in to your account.
         </p>
 
-        <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+        <form
+          className="mt-6 space-y-4"
+          method="post"
+          onSubmit={handleSubmit}
+        >
           <label className="block space-y-1.5 text-sm font-medium">
             <span>Email</span>
             <input
