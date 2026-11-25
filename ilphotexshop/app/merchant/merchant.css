@@ -1324,7 +1324,7 @@
     bottom: 0;
     left: 0;
     display: none;
-    width: min(330px, 88vw);
+    width: min(320px, calc(100vw - 48px));
     height: auto;
     box-shadow: 12px 9px 30px rgba(18, 43, 69, 0.2);
   }

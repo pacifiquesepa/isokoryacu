@@ -2004,6 +2004,23 @@
   padding: 0 30px;
 }
 
+.customer-portal-mobile-toggle {
+  display: none;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.customer-portal-mobile-toggle:hover {
+  background: var(--surface-secondary);
+}
+
 .customer-portal-page-label {
   display: grid;
   gap: 2px;
@@ -2716,38 +2733,63 @@
 
 @media (max-width: 760px) {
   .customer-portal-workspace {
-    grid-template-columns: minmax(0, 1fr);
+    display: block;
   }
 
   .customer-portal-sidebar {
-    position: static;
+    position: fixed;
+    z-index: 45;
+    top: 72px;
+    bottom: 0;
+    left: 0;
+    width: min(320px, calc(100vw - 48px));
     height: auto;
     max-height: none;
-    overflow: visible;
+    overflow: hidden;
     border-right: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+    box-shadow: 14px 10px 35px rgba(16, 36, 25, 0.2);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition:
+      transform 220ms ease,
+      visibility 220ms ease;
   }
 
-  .customer-portal-sidebar > nav {
+  .customer-portal-shell.is-mobile-open .customer-portal-sidebar {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .customer-portal-nav-backdrop {
+    position: fixed;
+    z-index: 40;
+    inset: 72px 0 0;
+    display: none;
+    border: 0;
+    background: rgba(13, 30, 21, 0.42);
+  }
+
+  .customer-portal-shell.is-mobile-open .customer-portal-nav-backdrop {
+    display: block;
+  }
+
+  .customer-portal-mobile-toggle {
     display: grid;
-    flex: 0 0 auto;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    overflow: visible;
-    padding: 10px 12px;
   }
 
-  .customer-portal-sidebar-label {
-    grid-column: 1 / -1;
+  .customer-portal-header {
+    justify-content: flex-start;
+    gap: 12px;
+    padding-inline: 18px;
   }
 
-  .customer-portal-nav-group {
-    grid-column: 1 / -1;
+  .customer-portal-page-label {
+    min-width: 0;
+    flex: 1;
   }
 
-  .customer-portal-sidebar-shop {
-    min-height: 46px;
-    margin: 0;
-    padding: 0 22px;
+  .customer-portal-header-actions {
+    margin-left: auto;
   }
 
   .customer-dashboard-charts {
@@ -2760,7 +2802,8 @@
     min-height: 62px;
     height: 62px;
     flex-basis: 62px;
-    padding: 9px 13px;
+    gap: 8px;
+    padding: 9px 11px;
   }
 
   .customer-portal-page-label span {
@@ -2781,19 +2824,21 @@
     min-height: calc(100vh - 62px);
   }
 
+  .customer-portal-sidebar {
+    top: 62px;
+  }
+
+  .customer-portal-nav-backdrop {
+    inset-block-start: 62px;
+  }
+
   .customer-portal-brand {
     min-height: 66px;
     flex-basis: 66px;
     padding-inline: 13px;
   }
 
-  .customer-portal-sidebar {
-    max-height: 56vh;
-    overflow-y: auto;
-  }
-
   .customer-portal-sidebar > nav {
-    grid-template-columns: minmax(0, 1fr);
     padding-inline: 9px;
   }
 
