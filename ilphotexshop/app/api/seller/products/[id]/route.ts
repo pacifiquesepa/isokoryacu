@@ -7,7 +7,10 @@ import {
   InvalidProductCategoryError,
   updateManagedProduct,
 } from "@/lib/data-access/products";
-import { requireUserRole } from "@/lib/authorization";
+import {
+  requireMerchantWorkspaceUser,
+  requireUserRole,
+} from "@/lib/authorization";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import {
@@ -30,7 +33,15 @@ type ProductRouteContext = {
 
 export async function PATCH(request: Request, context: ProductRouteContext) {
   try {
-    const actor = await requireUserRole(["seller", "admin", "super_admin"]);
+    const authenticated = await requireUserRole([
+      "seller",
+      "admin",
+      "super_admin",
+    ]);
+    const actor =
+      authenticated.role === "seller"
+        ? await requireMerchantWorkspaceUser("canManageProducts")
+        : authenticated;
     const { id } = await context.params;
     const parsedId = productIdSchema.safeParse(id);
     if (!parsedId.success) {
@@ -144,7 +155,15 @@ export async function PATCH(request: Request, context: ProductRouteContext) {
 
 export async function DELETE(_request: Request, context: ProductRouteContext) {
   try {
-    const actor = await requireUserRole(["seller", "admin", "super_admin"]);
+    const authenticated = await requireUserRole([
+      "seller",
+      "admin",
+      "super_admin",
+    ]);
+    const actor =
+      authenticated.role === "seller"
+        ? await requireMerchantWorkspaceUser("canManageProducts")
+        : authenticated;
     const { id } = await context.params;
     const parsedId = productIdSchema.safeParse(id);
     if (!parsedId.success) {

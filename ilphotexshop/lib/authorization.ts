@@ -51,8 +51,143 @@ export async function requireMerchantPageUser(
   if (!user) {
     redirect(`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`);
   }
-  if (user.role !== "seller") redirect("/");
+  const membership = await import("@/lib/prisma").then(({ prisma }) =>
+    prisma.merchantStaff.findFirst({
+      where: { userId: user.id, status: "active" },
+      select: {
+        merchantId: true,
+        merchant: {
+          select: { id: true, name: true, email: true, role: true, isSuspended: true, isAnonymized: true },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+  );
+  if (!membership && user.role === "seller") return user;
+  if (
+    !membership ||
+    membership.merchant.role !== "seller" ||
+    membership.merchant.isSuspended ||
+    membership.merchant.isAnonymized
+  ) {
+    redirect("/");
+  }
+  return {
+    ...membership.merchant,
+    role: "seller" as const,
+  };
+}
+
+export async function getMerchantWorkspacePermissions(userId: string) {
+  const { prisma } = await import("@/lib/prisma");
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, isSuspended: true, isAnonymized: true },
+  });
+  const membership = await prisma.merchantStaff.findFirst({
+    where: { userId, status: "active" },
+    select: {
+      role: true,
+      canManageProducts: true,
+      canManageOrders: true,
+      canManageStaff: true,
+      canManageFinancialProfile: true,
+    },
+  });
+  if (!membership) {
+    if (user?.role === "seller" && !user.isSuspended && !user.isAnonymized) {
+      return {
+        isOwner: true,
+        role: "owner" as const,
+        canManageProducts: true,
+        canManageOrders: true,
+        canManageStaff: true,
+        canManageFinancialProfile: true,
+      };
+    }
+    return null;
+  }
+  return {
+    isOwner: false,
+    role: membership.role,
+    canManageProducts: membership.canManageProducts,
+    canManageOrders: membership.canManageOrders,
+    canManageStaff: membership.canManageStaff,
+    canManageFinancialProfile: membership.canManageFinancialProfile,
+  };
+}
+
+export async function requireMerchantWorkspacePermission(
+  permission:
+    | "canManageProducts"
+    | "canManageOrders"
+    | "canManageStaff"
+    | "canManageFinancialProfile",
+) {
+  const user = await requireAuthenticatedUser();
+  const permissions = await getMerchantWorkspacePermissions(user.id);
+  if (!permissions || !permissions[permission]) {
+    throw new AuthorizationDeniedError();
+  }
   return user;
+}
+
+export async function requireMerchantWorkspaceUser(
+  permission:
+    | "canManageProducts"
+    | "canManageOrders"
+    | "canManageStaff"
+    | "canManageFinancialProfile",
+) {
+  const user = await requireAuthenticatedUser();
+  const { prisma } = await import("@/lib/prisma");
+
+  const membership = await prisma.merchantStaff.findFirst({
+    where: {
+      userId: user.id,
+      status: "active",
+      merchant: {
+        role: "seller",
+        isSuspended: false,
+        isAnonymized: false,
+      },
+    },
+    select: {
+      canManageProducts: true,
+      canManageOrders: true,
+      canManageStaff: true,
+      canManageFinancialProfile: true,
+      merchant: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+        },
+      },
+    },
+  });
+  if (!membership && user.role === "seller") {
+    const owner = await prisma.user.findFirst({
+      where: {
+        id: user.id,
+        role: "seller",
+        isActive: true,
+        archivedAt: null,
+        isSuspended: false,
+        isAnonymized: false,
+      },
+      select: { id: true, name: true, email: true, role: true },
+    });
+    if (owner) return owner;
+  }
+  if (!membership || !membership[permission]) {
+    throw new AuthorizationDeniedError();
+  }
+  return {
+    ...membership.merchant,
+    role: "seller" as const,
+  };
 }
 
 export async function requireCustomerPageUser(callbackUrl = "/orders") {

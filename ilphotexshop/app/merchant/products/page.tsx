@@ -4,7 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { Package, PackagePlus } from "lucide-react";
 import MerchantProductActions from "@/components/merchant/product-actions";
-import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  requireMerchantPageUser,
+  requireMerchantWorkspacePermission,
+} from "@/lib/authorization";
 import {
   getMerchantProducts,
   type MerchantProductFilter,
@@ -26,11 +29,12 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
 });
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default function MerchantProductsPage({
+export default async function MerchantProductsPage({
   searchParams,
 }: {
   searchParams: SearchParams;
 }) {
+  await requireMerchantWorkspacePermission("canManageProducts");
   return (
     <Suspense fallback={<div className="merchant-loading">Loading your products…</div>}>
       <MerchantProductsContent searchParams={searchParams} />
@@ -55,7 +59,9 @@ async function MerchantProductsContent({
     statusValue === "pending" ||
     statusValue === "scheduled" ||
     statusValue === "rejected" ||
-    statusValue === "hidden"
+    statusValue === "hidden" ||
+    statusValue === "featured" ||
+    statusValue === "archived"
       ? statusValue
       : "all";
   const queryInput = {
@@ -91,13 +97,30 @@ async function MerchantProductsContent({
   const nextParams = new URLSearchParams(baseParams);
   nextParams.set("offset", String(query.offset + query.limit));
 
+  const statusViews: Record<
+    MerchantProductFilter,
+    { title: string; description: string }
+  > = {
+    all: { title: "My products", description: "Manage your listings, stock, and storefront visibility." },
+    published: { title: "Published Products", description: "Listings visible in the marketplace storefront." },
+    unpublished: { title: "Unpublished Products", description: "Listings hidden or awaiting publication." },
+    draft: { title: "Draft Products", description: "Listings saved but not submitted for publication." },
+    pending: { title: "Pending Approval", description: "Listings awaiting Super Admin moderation." },
+    scheduled: { title: "Scheduled Products", description: "Listings with a future publication date." },
+    rejected: { title: "Rejected Products", description: "Listings returned with moderation feedback." },
+    hidden: { title: "Hidden Products", description: "Listings currently removed from storefront visibility." },
+    featured: { title: "Featured Products", description: "Published listings marked for featured placement." },
+    archived: { title: "Archived Products", description: "Hidden listings kept for catalog history." },
+  };
+  const statusView = statusViews[filter];
+
   return (
     <div className="merchant-page">
       <div className="merchant-page-heading">
         <div>
-          <div className="merchant-breadcrumb">Workspace / Products</div>
-          <h1>My products</h1>
-          <p>Manage your listings, stock, and storefront visibility.</p>
+          <div className="merchant-breadcrumb">Workspace / Products / {statusView.title}</div>
+          <h1>{statusView.title}</h1>
+          <p>{statusView.description}</p>
         </div>
         <Link className="merchant-primary-action" href="/merchant/products/new">
           <PackagePlus size={17} /> Add product
@@ -109,6 +132,13 @@ async function MerchantProductsContent({
         <div><strong>{numberFormat.format(summary.publishedProducts)}</strong><span>Published</span></div>
         <div><strong>{numberFormat.format(summary.unpublishedProducts)}</strong><span>Unpublished</span></div>
         <div><strong>{numberFormat.format(summary.outOfStockProducts)}</strong><span>Out of stock</span></div>
+        <div><strong>{numberFormat.format(summary.draftProducts)}</strong><span>Draft</span></div>
+        <div><strong>{numberFormat.format(summary.pendingProducts)}</strong><span>Pending</span></div>
+        <div><strong>{numberFormat.format(summary.scheduledProducts)}</strong><span>Scheduled</span></div>
+        <div><strong>{numberFormat.format(summary.rejectedProducts)}</strong><span>Rejected</span></div>
+        <div><strong>{numberFormat.format(summary.hiddenProducts)}</strong><span>Hidden</span></div>
+        <div><strong>{numberFormat.format(summary.featuredProducts)}</strong><span>Featured</span></div>
+        <div><strong>{numberFormat.format(summary.archivedProducts)}</strong><span>Archived</span></div>
       </section>
 
       <section className="merchant-panel merchant-dashboard-section">
@@ -146,6 +176,8 @@ async function MerchantProductsContent({
                 <option value="scheduled">Scheduled</option>
                 <option value="rejected">Rejected</option>
                 <option value="hidden">Hidden</option>
+                <option value="featured">Featured</option>
+                <option value="archived">Archived</option>
                 <option value="unpublished">Unpublished</option>
               </select>
             </label>
@@ -230,7 +262,10 @@ async function MerchantProductsContent({
                           <small>Publish at {dateFormat.format(product.scheduledAt)} UTC</small>
                         )}
                       </td>
-                      <td><MerchantProductActions id={product.id} /></td>
+                      <td>                      <MerchantProductActions
+                        archived={Boolean(product.archivedAt)}
+                        id={product.id}
+                      /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -258,7 +293,7 @@ async function MerchantProductsContent({
         ) : (
           <div className="merchant-empty-state">
             <Package aria-hidden="true" size={27} />
-            <strong>{query.q ? "No matching products" : "No products in this view"}</strong>
+            <strong>{query.q ? "No matching products" : `No ${statusView.title.toLowerCase()}`}</strong>
             <span>
               {query.q
                 ? "Try a different search or remove filters."

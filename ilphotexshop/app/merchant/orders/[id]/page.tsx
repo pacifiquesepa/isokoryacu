@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronLeft, Package } from "lucide-react";
 import SuperAdminRecordActions from "@/components/super-admin/record-actions";
+import MerchantOrderWorkflowActions from "@/components/merchant/order-workflow-actions";
 import { requireMerchantPageUser } from "@/lib/authorization";
 import { getMerchantOrder } from "@/lib/data-access/merchant-dashboard";
 
@@ -79,6 +80,15 @@ async function MerchantOrderDetailContent({
         This marketplace order may contain items from other shops. Only your
         shop&apos;s order items and subtotal are displayed below.
       </div>
+      <section className="merchant-panel merchant-dashboard-section">
+        <div className="merchant-panel-heading">
+          <div>
+            <h2>Order workflow</h2>
+            <p>Update only the fulfillment state for this marketplace order.</p>
+          </div>
+        </div>
+        <MerchantOrderWorkflowActions orderId={order.id} status={order.status} />
+      </section>
       <section className="merchant-panel merchant-dashboard-section">
         <div className="merchant-panel-heading">
           <div>

@@ -178,9 +178,13 @@ export default async function SuperAdminNotificationActivityPage() {
                 {orderNotifications.map((notification) => (
                   <tr key={notification.id}>
                     <td>
-                      <Link href="/super-admin/orders">
-                        #{notification.orderId.slice(-8).toUpperCase()}
-                      </Link>
+                      {notification.orderId ? (
+                        <Link href="/super-admin/orders">
+                          #{notification.orderId.slice(-8).toUpperCase()}
+                        </Link>
+                      ) : (
+                        <span>General</span>
+                      )}
                     </td>
                     <td>
                       <strong>{notification.title}</strong>

@@ -263,6 +263,9 @@ model User {
   twoFactorEnabled               Boolean                          @default(false)
   twoFactorSecret                String?                          @db.VarChar(128)
   twoFactorPendingSecret         String?                          @db.VarChar(128)
+  emailTwoFactorEnabled          Boolean                          @default(false)
+  emailTwoFactorPendingCodeHash  String?                          @db.Char(64)
+  emailTwoFactorPendingExpiresAt DateTime?
   isSuspended                    Boolean                          @default(false)
   isAnonymized                   Boolean                          @default(false)
   products                       Product[]                        @relation("ProductOwner")
@@ -309,6 +312,14 @@ model User {
   securitySessions               SecuritySession[]                @relation("SecuritySessionUser")
   securityDevices                SecurityDevice[]                 @relation("SecurityDeviceUser")
   securityAlerts                 SecurityAlert[]                  @relation("SecurityAlertUser")
+  merchantPreference             MerchantPreference?
+  merchantNotifications          MerchantNotification[]
+  productViews                   ProductView[]
+  productReviews                 ProductReview[]
+  favorites                      ProductFavorite[]
+  merchantStaffAuditsMade        MerchantStaffAudit[]             @relation("MerchantStaffAuditActor")
+  merchantStaffAuditsReceived    MerchantStaffAudit[]             @relation("MerchantStaffAuditTarget")
+  merchantStaffAuditsOnMerchant  MerchantStaffAudit[]             @relation("MerchantStaffAuditMerchant")
   createdAt                      DateTime                         @default(now())
   updatedAt                      DateTime                         @updatedAt
 
@@ -422,8 +433,12 @@ model Product {
   stockMovements    ProductStockMovement[]
   isPublished       Boolean                 @default(false)
   isFeatured        Boolean                 @default(false)
+  archivedAt        DateTime?
   uploadedImages    ProductImage[]
   reports           ProductReport[]
+  views             ProductView[]
+  reviews           ProductReview[]
+  favorites         ProductFavorite[]
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
 
@@ -458,6 +473,74 @@ model ProductImage {
   product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([productId])
+}
+
+model ProductView {
+  id        String   @id @default(cuid()) @db.VarChar(100)
+  productId String   @db.VarChar(100)
+  viewerId  String?
+  viewedAt  DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  viewer    User?    @relation(fields: [viewerId], references: [id], onDelete: SetNull)
+
+  @@index([productId, viewedAt])
+  @@index([viewerId, viewedAt])
+}
+
+model ProductReview {
+  id         String   @id @default(cuid()) @db.VarChar(100)
+  productId  String   @db.VarChar(100)
+  reviewerId String
+  rating     Int
+  comment    String?  @db.VarChar(2000)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  reviewer   User     @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, reviewerId])
+  @@index([productId, createdAt])
+  @@index([reviewerId, createdAt])
+}
+
+model ProductFavorite {
+  id        String   @id @default(cuid()) @db.VarChar(100)
+  productId String   @db.VarChar(100)
+  userId    String
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, userId])
+  @@index([productId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model MerchantPreference {
+  merchantId           String   @id
+  notificationEmail    Boolean  @default(true)
+  notificationInApp    Boolean  @default(true)
+  notificationWhatsapp Boolean  @default(false)
+  appearance           String   @default("system") @db.VarChar(20)
+  language             String   @default("en") @db.VarChar(2)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  merchant             User     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model MerchantNotification {
+  id         String    @id @default(cuid()) @db.VarChar(100)
+  merchantId String
+  title      String    @db.VarChar(160)
+  message    String    @db.VarChar(1000)
+  type       String    @db.VarChar(40)
+  linkUrl    String?   @db.VarChar(2048)
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  merchant   User      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, readAt, createdAt])
+  @@index([merchantId, createdAt])
 }
 
 model ProductSubcategory {
@@ -550,8 +633,8 @@ model DeliverySettings {
 
 model OrderNotification {
   id           String                   @id @default(cuid()) @db.VarChar(100)
-  orderId      String                   @db.VarChar(100)
-  order        Order                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId      String?                  @db.VarChar(100)
+  order        Order?                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   customerId   String
   customer     User                     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   channel      OrderNotificationChannel
@@ -863,6 +946,12 @@ model SmsCampaign {
 
 model StaffInvitation {
   id           String                @id @default(cuid()) @db.VarChar(100)
+  merchantId   String?
+  merchantRole MerchantStaffRole?
+  canManageProducts Boolean @default(false)
+  canManageOrders Boolean @default(false)
+  canManageStaff Boolean @default(false)
+  canManageFinancialProfile Boolean @default(false)
   email        String                @db.VarChar(254)
   name         String                @db.VarChar(100)
   role         UserRole
@@ -915,6 +1004,33 @@ model MerchantStaff {
   @@unique([merchantId, userId])
   @@index([merchantId, status])
   @@index([userId])
+}
+
+enum MerchantStaffAuditAction {
+  assigned
+  permissions_updated
+  suspended
+  activated
+  removed
+}
+
+model MerchantStaffAudit {
+  id         String                   @id @default(cuid()) @db.VarChar(100)
+  merchantId String
+  actorId    String
+  targetId   String
+  action     MerchantStaffAuditAction
+  detail     String                   @db.VarChar(1000)
+  success    Boolean                  @default(true)
+  createdAt  DateTime                 @default(now())
+  merchant   User                     @relation("MerchantStaffAuditMerchant", fields: [merchantId], references: [id], onDelete: Cascade)
+  actor      User                     @relation("MerchantStaffAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  target     User                     @relation("MerchantStaffAuditTarget", fields: [targetId], references: [id], onDelete: Restrict)
+
+  @@index([merchantId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([targetId, createdAt])
+  @@index([action, createdAt])
 }
 
 model MerchantFinancialProfile {

@@ -39,13 +39,43 @@ export default function ProductCard({
   const isOutOfStock = product.stockQuantity === 0;
   const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
 
+  async function recordView() {
+    try {
+      await fetch(`/api/products/${encodeURIComponent(product.id)}/view`, {
+        method: "POST",
+        keepalive: true,
+      });
+    } catch {
+      // Product viewing remains available if analytics recording fails.
+    }
+  }
+
+  async function toggleFavorite() {
+    try {
+      const response = await fetch(
+        `/api/products/${encodeURIComponent(product.id)}/favorite`,
+        { method: "PUT", cache: "no-store" },
+      );
+      if (!response.ok) return;
+      const result = await response.json();
+      setIsFavorite(Boolean(result.favorite));
+    } catch (error) {
+      console.error("Could not update wishlist", error);
+    }
+  }
+
+  function viewProduct() {
+    void recordView();
+    onViewProduct(product);
+  }
+
   return (
     <article className="product-card">
       <div className="product-image-wrap">
         <button
           className="product-image-button"
           type="button"
-          onClick={() => onViewProduct(product)}
+          onClick={viewProduct}
           aria-label={translate(language, "viewProduct").replace(
             "{product}",
             copy.name,
@@ -64,7 +94,7 @@ export default function ProductCard({
           <button
             className={`favorite-button${isFavorite ? " is-favorite" : ""}`}
             type="button"
-            onClick={() => setIsFavorite((favorite) => !favorite)}
+            onClick={() => void toggleFavorite()}
             aria-label={
               isFavorite
                 ? translate(language, "removeFavorite").replace(
@@ -83,7 +113,7 @@ export default function ProductCard({
           <button
             className="product-view-button"
             type="button"
-            onClick={() => onViewProduct(product)}
+            onClick={viewProduct}
             aria-label={translate(language, "viewProduct").replace(
               "{product}",
               copy.name,
@@ -98,7 +128,7 @@ export default function ProductCard({
         <button
           className="product-name"
           type="button"
-          onClick={() => onViewProduct(product)}
+          onClick={viewProduct}
         >
           {copy.name}
         </button>

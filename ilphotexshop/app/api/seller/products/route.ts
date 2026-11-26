@@ -7,7 +7,10 @@ import {
   InvalidProductScheduleError,
   InvalidProductSubcategoryError,
 } from "@/lib/data-access/products";
-import { requireUserRole } from "@/lib/authorization";
+import {
+  requireMerchantWorkspaceUser,
+  requireUserRole,
+} from "@/lib/authorization";
 import { apiErrorResponse } from "@/lib/http/api-error-response";
 import { parseJsonRequest } from "@/lib/http/parse-json-request";
 import {
@@ -64,7 +67,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const seller = await requireUserRole("seller");
+    const seller = await requireMerchantWorkspaceUser("canManageProducts");
     const limit = await checkProductMutationLimit(seller.id);
     if (!limit.allowed) {
       return rateLimitResponse(limit, "product write");

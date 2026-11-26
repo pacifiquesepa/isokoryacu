@@ -48,11 +48,25 @@ export async function POST(request: Request) {
         name: invitation.name,
         email: invitation.email,
         passwordHash,
-        role: "admin",
+        role: invitation.merchantId ? "customer" : "admin",
         isActive: true,
       },
       select: { id: true, name: true, email: true, role: true },
     });
+    if (invitation.merchantId && invitation.merchantRole) {
+      await transaction.merchantStaff.create({
+        data: {
+          merchantId: invitation.merchantId,
+          userId: created.id,
+          role: invitation.merchantRole,
+          status: "active",
+          canManageProducts: invitation.canManageProducts,
+          canManageOrders: invitation.canManageOrders,
+          canManageStaff: invitation.canManageStaff,
+          canManageFinancialProfile: invitation.canManageFinancialProfile,
+        },
+      });
+    }
     await transaction.staffInvitation.update({
       where: { id: invitation.id },
       data: {

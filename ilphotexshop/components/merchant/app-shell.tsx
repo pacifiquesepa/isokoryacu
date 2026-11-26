@@ -23,6 +23,14 @@ type MerchantAppShellProps = {
   children: ReactNode;
   userName: string;
   userEmail: string;
+  permissions?: {
+    isOwner: boolean;
+    role: "owner" | "manager" | "operations" | "support" | "finance";
+    canManageProducts: boolean;
+    canManageOrders: boolean;
+    canManageStaff: boolean;
+    canManageFinancialProfile: boolean;
+  } | null;
 };
 
 function isActiveHref(pathname: string, href: string, query: string) {
@@ -36,6 +44,7 @@ export default function MerchantAppShell({
   children,
   userName,
   userEmail,
+  permissions,
 }: MerchantAppShellProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -54,7 +63,25 @@ export default function MerchantAppShell({
           ? "shop"
         : pathname.startsWith("/merchant/profile")
           ? "account"
-          : "overview";
+            : pathname.startsWith("/merchant/staff")
+              ? "staff"
+                : pathname.startsWith("/merchant/analytics")
+              ? "analytics"
+                : pathname.startsWith("/merchant/promotions")
+              ? "marketing"
+                : pathname.startsWith("/merchant/messages")
+              ? "messages"
+                : pathname.startsWith("/merchant/support")
+              ? "messages"
+                : pathname.startsWith("/merchant/notifications")
+              ? "messages"
+                : pathname.startsWith("/merchant/audit")
+              ? "audit"
+                : pathname.startsWith("/merchant/settings")
+              ? "settings"
+                : pathname.startsWith("/merchant/help")
+              ? "help"
+              : "overview";
   const initials =
     userName
       .split(/\s+/)
@@ -152,7 +179,30 @@ export default function MerchantAppShell({
 
           <nav aria-label="Merchant sections" className="merchant-nav">
             <p className="merchant-nav-caption">WORKSPACE</p>
-            {merchantNavSections.map((section) => {
+            {merchantNavSections
+              .filter((section) => {
+                if (!permissions || permissions.isOwner) return true;
+                if (permissions.role === "support") {
+                  return ["overview", "messages", "customers", "help", "settings", "account"].includes(section.id);
+                }
+                if (permissions.role === "finance") {
+                  return ["overview", "finance", "audit", "settings", "account"].includes(section.id);
+                }
+                if (permissions.role === "operations") {
+                  return ["overview", "products", "inventory", "analytics", "orders", "settings", "account"].includes(section.id);
+                }
+                if (permissions.role === "manager") {
+                  return ["overview", "shop", "products", "orders", "inventory", "customers", "staff", "analytics", "settings", "account"].includes(section.id);
+                }
+                if (section.id === "products" || section.id === "inventory" || section.id === "analytics") {
+                  return permissions.canManageProducts;
+                }
+                if (section.id === "orders") return permissions.canManageOrders;
+                if (section.id === "staff") return permissions.canManageStaff;
+                if (section.id === "finance") return permissions.canManageFinancialProfile;
+                return true;
+              })
+              .map((section) => {
               const Icon = section.icon;
               const active = currentSection === section.id;
               const expanded = active || openSection === section.id;

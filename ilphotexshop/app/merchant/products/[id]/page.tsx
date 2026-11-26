@@ -73,7 +73,9 @@ async function MerchantProductDetailContent({
     { label: "Stock", value: numberFormat.format(product.stockQuantity) },
     {
       label: "Storefront status",
-      value: product.isPublished
+      value: product.archivedAt
+        ? "Archived"
+        : product.isPublished
         ? "Published"
         : product.moderationStatus === "pending"
           ? "Pending review"

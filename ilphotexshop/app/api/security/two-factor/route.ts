@@ -1,4 +1,3 @@
-import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import {
   authorizationErrorResponse,
@@ -16,16 +15,31 @@ import {
 } from "@/lib/security-totp";
 import { revokeUserSecuritySessions } from "@/lib/data-access/super-admin-security";
 import { twoFactorActionSchema } from "@/lib/validation/security";
+import bcrypt from "bcryptjs";
+import {
+  createEmailOtp,
+  hashEmailOtp,
+  sendEmailOtp,
+} from "@/lib/security-email-otp";
 
 export async function GET() {
   try {
     const user = await requireAuthenticatedUser();
     const account = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { twoFactorEnabled: true },
+      select: {
+        twoFactorEnabled: true,
+        emailTwoFactorEnabled: true,
+      },
     });
     return Response.json(
-      { enabled: account?.twoFactorEnabled ?? false },
+      {
+        enabled:
+          Boolean(account?.twoFactorEnabled) ||
+          Boolean(account?.emailTwoFactorEnabled),
+        authenticator: account?.twoFactorEnabled ?? false,
+        email: account?.emailTwoFactorEnabled ?? false,
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -70,9 +84,76 @@ export async function POST(request: Request) {
         twoFactorEnabled: true,
         twoFactorSecret: true,
         twoFactorPendingSecret: true,
+        emailTwoFactorEnabled: true,
+        emailTwoFactorPendingCodeHash: true,
+        emailTwoFactorPendingExpiresAt: true,
       },
     });
     if (!account) return Response.json({ error: "Account not found" }, { status: 404 });
+
+    if (body.data.action === "configure") {
+      if (!(await bcrypt.compare(body.data.password, account.passwordHash))) {
+        return Response.json({ error: "Password is incorrect" }, { status: 422 });
+      }
+      if (body.data.authenticator && !account.twoFactorSecret) {
+        return Response.json(
+          { error: "Scan and verify the authenticator QR code first" },
+          { status: 409 },
+        );
+      }
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          emailTwoFactorEnabled: body.data.email,
+          ...(body.data.authenticator
+            ? {}
+            : { twoFactorEnabled: false, twoFactorSecret: null, twoFactorPendingSecret: null }),
+          ...(!body.data.email
+            ? { emailTwoFactorPendingCodeHash: null, emailTwoFactorPendingExpiresAt: null }
+            : {}),
+        },
+      });
+      await revokeUserSecuritySessions(user.id);
+      return Response.json({
+        enabled: body.data.authenticator || body.data.email,
+        authenticator: body.data.authenticator,
+        email: body.data.email,
+        sessionsRevoked: true,
+      });
+    }
+
+    if (body.data.action === "send_email_otp") {
+      const otp = createEmailOtp();
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          emailTwoFactorPendingCodeHash: otp.hash,
+          emailTwoFactorPendingExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+      await sendEmailOtp(user.email, otp.code);
+      return Response.json({ sent: true });
+    }
+
+    if (body.data.action === "verify_email_otp") {
+      if (
+        !account.emailTwoFactorPendingCodeHash ||
+        !account.emailTwoFactorPendingExpiresAt ||
+        account.emailTwoFactorPendingExpiresAt.getTime() <= Date.now() ||
+        hashEmailOtp(body.data.code) !== account.emailTwoFactorPendingCodeHash
+      ) {
+        return Response.json({ error: "Email verification code is invalid or expired" }, { status: 422 });
+      }
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          emailTwoFactorEnabled: true,
+          emailTwoFactorPendingCodeHash: null,
+          emailTwoFactorPendingExpiresAt: null,
+        },
+      });
+      return Response.json({ verified: true });
+    }
 
     if (body.data.action === "enable") {
       if (!account.twoFactorPendingSecret) {

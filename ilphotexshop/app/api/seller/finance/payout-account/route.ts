@@ -1,4 +1,4 @@
-import { requireUserRole } from "@/lib/authorization";
+import { requireMerchantWorkspaceUser } from "@/lib/authorization";
 import {
   createMerchantFinancialChangeRequest,
   MerchantFinancialChangeConflictError,
@@ -11,7 +11,7 @@ import { merchantFinancialChangeSchema } from "@/lib/validation/merchant-finance
 
 export async function POST(request: Request) {
   try {
-    const seller = await requireUserRole("seller");
+    const seller = await requireMerchantWorkspaceUser("canManageFinancialProfile");
     const limit = await checkSellerProfileMutationLimit(seller.id);
     if (!limit.allowed) return rateLimitResponse(limit, "payout account change");
     const body = await parseJsonRequest(request, merchantFinancialChangeSchema);

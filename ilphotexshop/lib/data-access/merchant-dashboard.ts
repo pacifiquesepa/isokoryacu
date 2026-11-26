@@ -19,7 +19,9 @@ export type MerchantProductFilter =
   | "pending"
   | "scheduled"
   | "rejected"
-  | "hidden";
+  | "hidden"
+  | "featured"
+  | "archived";
 
 export type MerchantProductRow = {
   id: string;
@@ -34,11 +36,132 @@ export type MerchantProductRow = {
   isPublished: boolean;
   moderationStatus: string;
   scheduledAt: Date | null;
+  archivedAt: Date | null;
   createdAt: Date;
 };
 
 function assertMerchant(actor: MerchantActor) {
   if (actor.role !== "seller") throw new AuthorizationDeniedError();
+}
+
+export async function getMerchantAnalyticsData(actor: MerchantActor) {
+  assertMerchant(actor);
+  const from = new Date();
+  from.setUTCDate(from.getUTCDate() - 29);
+  from.setUTCHours(0, 0, 0, 0);
+
+  const [orderItems, products, salesOrders, cancelledOrders, productViews, productReviews, favorites] =
+    await prisma.$transaction([
+      prisma.orderItem.findMany({
+        where: {
+          sellerId: actor.id,
+          order: { createdAt: { gte: from } },
+        },
+        select: {
+          productId: true,
+          productName: true,
+          quantity: true,
+          merchantLineTotal: true,
+          createdAt: true,
+          order: { select: { status: true } },
+        },
+      }),
+      prisma.product.findMany({
+        where: { ownerId: actor.id },
+        select: {
+          id: true,
+          name: true,
+          rating: true,
+          reviewCount: true,
+          stockQuantity: true,
+          isPublished: true,
+        },
+        orderBy: { name: "asc" },
+      }),
+      prisma.order.count({
+        where: {
+          createdAt: { gte: from },
+          items: { some: { sellerId: actor.id } },
+          status: { in: [OrderStatus.delivered, OrderStatus.fulfilled] },
+        },
+      }),
+      prisma.order.count({
+        where: {
+          createdAt: { gte: from },
+          items: { some: { sellerId: actor.id } },
+          status: OrderStatus.cancelled,
+        },
+      }),
+      prisma.productView.count({
+        where: { product: { ownerId: actor.id }, viewedAt: { gte: from } },
+      }),
+      prisma.productReview.count({
+        where: { product: { ownerId: actor.id }, createdAt: { gte: from } },
+      }),
+      prisma.productFavorite.count({
+        where: { product: { ownerId: actor.id } },
+      }),
+    ]);
+
+  const completedStatuses = new Set<OrderStatus>([
+    OrderStatus.delivered,
+    OrderStatus.fulfilled,
+  ]);
+  const activeItems = orderItems.filter((item) =>
+    completedStatuses.has(item.order.status),
+  );
+  const byProduct = new Map<
+    string,
+    { name: string; quantity: number; revenue: number; orders: number }
+  >();
+  for (const item of activeItems) {
+    const key = item.productId ?? item.productName;
+    const current = byProduct.get(key) ?? {
+      name: item.productName,
+      quantity: 0,
+      revenue: 0,
+      orders: 0,
+    };
+    current.quantity += item.quantity;
+    current.revenue += item.merchantLineTotal;
+    current.orders += 1;
+    byProduct.set(key, current);
+  }
+
+  const productRows = [...byProduct.entries()]
+    .map(([id, row]) => ({ id, ...row }))
+    .sort((a, b) => b.revenue - a.revenue);
+  const totalRevenue = activeItems.reduce(
+    (sum, item) => sum + item.merchantLineTotal,
+    0,
+  );
+  const totalUnits = activeItems.reduce(
+    (sum, item) => sum + item.quantity,
+    0,
+  );
+  const ratedProducts = products.filter((product) => product.reviewCount > 0);
+  const averageRating = ratedProducts.length
+    ? ratedProducts.reduce((sum, product) => sum + product.rating, 0) /
+      ratedProducts.length
+    : 0;
+  const conversionRate = productViews
+    ? (salesOrders / productViews) * 100
+    : 0;
+
+  return {
+    period: "Last 30 days",
+    totalRevenue,
+    totalUnits,
+    salesOrders,
+    cancelledOrders,
+    averageRating,
+    productViews,
+    productReviews,
+    favorites,
+    conversionRate,
+    products,
+    bestSellers: productRows.slice(0, 10),
+  };
 }
 
 export async function getMerchantDashboardData(actor: MerchantActor) {
@@ -210,10 +333,17 @@ export async function getMerchantProducts(
   assertMerchant(actor);
   const where: Prisma.ProductWhereInput = {
     ownerId: actor.id,
+    ...(filter === "all"
+      ? { archivedAt: null }
+      : {}),
     ...(filter === "published"
       ? { isPublished: true }
       : filter === "unpublished"
         ? { isPublished: false }
+        : filter === "featured"
+          ? { isFeatured: true, isPublished: true }
+          : filter === "archived"
+            ? { archivedAt: { not: null } }
         : filter === "draft" ||
             filter === "pending" ||
             filter === "scheduled" ||
@@ -267,6 +397,13 @@ export async function getMerchantProducts(
     publishedProducts,
     unpublishedProducts,
     outOfStockProducts,
+    draftProducts,
+    pendingProducts,
+    scheduledProducts,
+    rejectedProducts,
+    hiddenProducts,
+    featuredProducts,
+    archivedProducts,
   ] = await prisma.$transaction([
     prisma.product.findMany({
       where,
@@ -282,6 +419,7 @@ export async function getMerchantProducts(
         rating: true,
         reviewCount: true,
         isPublished: true,
+        archivedAt: true,
         moderationStatus: true,
         scheduledAt: true,
         createdAt: true,
@@ -308,6 +446,13 @@ export async function getMerchantProducts(
     prisma.product.count({
       where: { ownerId: actor.id, stockQuantity: 0 },
     }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: null, moderationStatus: "draft" } }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: null, moderationStatus: "pending" } }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: null, moderationStatus: "scheduled" } }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: null, moderationStatus: "rejected" } }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: null, moderationStatus: "hidden" } }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: null, isFeatured: true, isPublished: true } }),
+    prisma.product.count({ where: { ownerId: actor.id, archivedAt: { not: null } } }),
   ]);
 
   return {
@@ -321,6 +466,13 @@ export async function getMerchantProducts(
       publishedProducts,
       unpublishedProducts,
       outOfStockProducts,
+      draftProducts,
+      pendingProducts,
+      scheduledProducts,
+      rejectedProducts,
+      hiddenProducts,
+      featuredProducts,
+      archivedProducts,
     },
   };
 }
@@ -355,6 +507,7 @@ export async function getMerchantProduct(actor: MerchantActor, id: string) {
       isPublished: true,
       moderationStatus: true,
       scheduledAt: true,
+      archivedAt: true,
       uploadedImages: {
         select: { id: true, sortOrder: true },
         orderBy: { sortOrder: "asc" },
@@ -382,7 +535,7 @@ export async function getMerchantOrders(
     ...sellerItems,
     ...(status ? { status } : {}),
   };
-  const [orders, total, pending, confirmed, fulfilled, cancelled] =
+  const [orders, total, pending, confirmed, processing, shipped, delivered, fulfilled, cancelled] =
     await prisma.$transaction([
       prisma.order.findMany({
         where,
@@ -414,6 +567,15 @@ export async function getMerchantOrders(
         where: { ...sellerItems, status: OrderStatus.confirmed },
       }),
       prisma.order.count({
+        where: { ...sellerItems, status: OrderStatus.processing },
+      }),
+      prisma.order.count({
+        where: { ...sellerItems, status: OrderStatus.shipped },
+      }),
+      prisma.order.count({
+        where: { ...sellerItems, status: OrderStatus.delivered },
+      }),
+      prisma.order.count({
         where: { ...sellerItems, status: OrderStatus.fulfilled },
       }),
       prisma.order.count({
@@ -421,7 +583,17 @@ export async function getMerchantOrders(
       }),
     ]);
 
-  return { orders, total, pending, confirmed, fulfilled, cancelled };
+  return {
+    orders,
+    total,
+    pending,
+    confirmed,
+    processing,
+    shipped,
+    delivered,
+    fulfilled,
+    cancelled,
+  };
 }
 
 export async function getMerchantProfile(actor: MerchantActor) {

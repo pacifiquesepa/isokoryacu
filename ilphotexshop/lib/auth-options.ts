@@ -17,6 +17,8 @@ import {
   SecurityDeviceBlockedError,
 } from "@/lib/data-access/security-auth";
 import { decryptTotpSecret, verifyTotp } from "@/lib/security-totp";
+import { hashEmailOtp } from "@/lib/security-email-otp";
+import { prisma } from "@/lib/prisma";
 import { checkLoginRateLimit } from "@/lib/rate-limit";
 import { credentialsSchema } from "@/lib/validation/auth";
 
@@ -57,6 +59,7 @@ export const authOptions: NextAuthOptions = {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
         totpCode: { label: "Authenticator code", type: "text" },
+        emailOtpCode: { label: "Email verification code", type: "text" },
       },
       async authorize(credentials, request) {
         const headers = request.headers ?? {};
@@ -64,6 +67,7 @@ export const authOptions: NextAuthOptions = {
           email: credentials?.email,
           password: credentials?.password,
           totpCode: credentials?.totpCode,
+          emailOtpCode: credentials?.emailOtpCode,
         });
         if (!parsed.success) return null;
 
@@ -140,6 +144,27 @@ export const authOptions: NextAuthOptions = {
           }
         }
 
+        if (user.emailTwoFactorEnabled) {
+          const validEmailCode =
+            user.emailTwoFactorPendingCodeHash &&
+            user.emailTwoFactorPendingExpiresAt &&
+            user.emailTwoFactorPendingExpiresAt.getTime() > Date.now() &&
+            parsed.data.emailOtpCode &&
+            hashEmailOtp(parsed.data.emailOtpCode) ===
+              user.emailTwoFactorPendingCodeHash;
+          if (!validEmailCode) {
+            await recordLoginEvent({
+              email: parsed.data.email,
+              userId: user.id,
+              outcome: "failed",
+              reason: "invalid_or_missing_email_otp",
+              ipAddress,
+              userAgent,
+            });
+            return null;
+          }
+        }
+
         let securitySessionToken: string;
         try {
           securitySessionToken = await createSecuritySession({
@@ -161,6 +186,18 @@ export const authOptions: NextAuthOptions = {
         }
 
         try {
+          if (user.emailTwoFactorEnabled) {
+            await prisma.user.updateMany({
+              where: {
+                id: user.id,
+                emailTwoFactorPendingCodeHash: user.emailTwoFactorPendingCodeHash,
+              },
+              data: {
+                emailTwoFactorPendingCodeHash: null,
+                emailTwoFactorPendingExpiresAt: null,
+              },
+            });
+          }
           await recordSuccessfulUserLogin(user.id);
           await recordLoginEvent({
             email: parsed.data.email,

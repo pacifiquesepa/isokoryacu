@@ -2,7 +2,11 @@ import { Suspense, type ReactNode } from "react";
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import MerchantAppShell from "@/components/merchant/app-shell";
-import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  getAuthenticatedUser,
+  getMerchantWorkspacePermissions,
+  requireMerchantPageUser,
+} from "@/lib/authorization";
 import "./merchant.css";
 
 export const metadata: Metadata = {
@@ -25,8 +29,16 @@ async function AuthenticatedMerchantLayout({
 }) {
   await connection();
   const seller = await requireMerchantPageUser();
+  const authenticatedUser = await getAuthenticatedUser();
+  const permissions = authenticatedUser
+    ? await getMerchantWorkspacePermissions(authenticatedUser.id)
+    : null;
   return (
-    <MerchantAppShell userEmail={seller.email} userName={seller.name}>
+    <MerchantAppShell
+      permissions={permissions}
+      userEmail={seller.email}
+      userName={seller.name}
+    >
       {children}
     </MerchantAppShell>
   );

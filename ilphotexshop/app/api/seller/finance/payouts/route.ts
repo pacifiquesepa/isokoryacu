@@ -1,4 +1,4 @@
-import { requireUserRole } from "@/lib/authorization";
+import { requireMerchantWorkspaceUser } from "@/lib/authorization";
 import {
   createMerchantPayoutRequest,
   MerchantPayoutNotAvailableError,
@@ -11,7 +11,7 @@ import { merchantPayoutRequestSchema } from "@/lib/validation/merchant-finance";
 
 export async function POST(request: Request) {
   try {
-    const seller = await requireUserRole("seller");
+    const seller = await requireMerchantWorkspaceUser("canManageFinancialProfile");
     const limit = await checkProductMutationLimit(seller.id);
     if (!limit.allowed) return rateLimitResponse(limit, "payout request");
     const body = await parseJsonRequest(request, merchantPayoutRequestSchema);

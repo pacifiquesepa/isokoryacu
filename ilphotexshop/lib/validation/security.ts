@@ -4,6 +4,22 @@ export const twoFactorActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("setup") }).strict(),
   z.object({ action: z.literal("enable"), code: z.string().regex(/^[0-9]{6}$/) }).strict(),
   z.object({
+    action: z.literal("configure"),
+    authenticator: z.boolean(),
+    email: z.boolean(),
+    password: z.string().min(1).max(72),
+  }).strict().refine(
+    (value) => value.authenticator || value.email,
+    "Select at least one verification method",
+  ),
+  z.object({
+    action: z.literal("send_email_otp"),
+  }).strict(),
+  z.object({
+    action: z.literal("verify_email_otp"),
+    code: z.string().regex(/^[0-9]{6}$/),
+  }).strict(),
+  z.object({
     action: z.literal("disable"),
     code: z.string().regex(/^[0-9]{6}$/),
     password: z.string().min(1).max(72),

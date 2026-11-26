@@ -13,7 +13,11 @@ import {
   Tag,
   Wallet,
 } from "lucide-react";
-import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  getAuthenticatedUser,
+  getMerchantWorkspacePermissions,
+  requireMerchantPageUser,
+} from "@/lib/authorization";
 import { getMerchantDashboardData } from "@/lib/data-access/merchant-dashboard";
 import { getMerchantFinanceSummary } from "@/lib/data-access/merchant-finance";
 import AnnouncementFeed from "@/components/announcements/announcement-feed";
@@ -177,6 +181,10 @@ export default function MerchantDashboardPage() {
 
 async function MerchantDashboardContent() {
   const seller = await requireMerchantPageUser();
+  const authenticatedUser = await getAuthenticatedUser();
+  const permissions = authenticatedUser
+    ? await getMerchantWorkspacePermissions(authenticatedUser.id)
+    : null;
   const [dashboard, finance] = await Promise.all([
     getMerchantDashboardData(seller),
     getMerchantFinanceSummary(seller),
@@ -234,14 +242,43 @@ async function MerchantDashboardContent() {
       href: "/merchant/finance",
     },
   ];
+  const role = permissions?.role ?? "owner";
+  const roleCards = cards.filter((card) => {
+    if (role === "owner" || role === "manager") return true;
+    if (role === "operations") {
+      return ["My products", "Unpublished", "Orders", "Out of stock", "Low-stock alerts"].includes(card.label);
+    }
+    if (role === "finance") {
+      return card.label === "Available balance";
+    }
+    if (role === "support") {
+      return card.label === "Orders";
+    }
+    return true;
+  });
+  const roleTitle: Record<string, string> = {
+    owner: "Merchant Owner",
+    manager: "Shop Manager",
+    operations: "Operations / Inventory",
+    finance: "Finance",
+    support: "Customer Support",
+  };
 
   return (
     <div className="merchant-page">
       <div className="merchant-page-heading">
         <div>
           <div className="merchant-breadcrumb">Workspace / Overview</div>
-          <h1>Welcome, {seller.name}</h1>
-          <p>Manage your products and follow orders that contain your items.</p>
+          <h1>{roleTitle[role]} · Welcome, {seller.name}</h1>
+          <p>
+            {role === "owner" || role === "manager"
+              ? "Manage your shop across products, orders, inventory and staff."
+              : role === "operations"
+                ? "Manage catalog, stock and order fulfillment activities."
+                : role === "finance"
+                  ? "Monitor eligible earnings, payouts and financial activity."
+                  : "Support customers through scoped conversations and orders."}
+          </p>
         </div>
         <Link className="merchant-primary-action" href="/merchant/products/new">
           <PackageCheck size={17} />
@@ -252,7 +289,7 @@ async function MerchantDashboardContent() {
       <AnnouncementFeed userId={seller.id} />
 
       <section aria-label="Shop summary" className="merchant-metrics">
-        {cards.map((card) => {
+        {roleCards.map((card) => {
           const Icon = card.icon;
           return (
             <Link

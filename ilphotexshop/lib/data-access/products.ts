@@ -844,3 +844,23 @@ export async function setSuperAdminProductFeaturedState(
   if (!product) return false;
   throw new ProductNotPublishedError();
 }
+
+export async function setMerchantProductArchivedState(
+  actor: { id: string; role: UserRole },
+  id: string,
+  archived: boolean,
+) {
+  if (actor.role !== "seller") throw new AuthorizationDeniedError();
+  const result = await prisma.product.updateMany({
+    where: {
+      id,
+      ownerId: actor.id,
+      ...(archived ? { archivedAt: null } : { archivedAt: { not: null } }),
+    },
+    data: {
+      archivedAt: archived ? new Date() : null,
+      ...(archived ? { isPublished: false, isFeatured: false } : {}),
+    },
+  });
+  return result.count === 1;
+}

@@ -14,6 +14,9 @@ type UserAuthRecord = {
   isAnonymized: boolean;
   twoFactorEnabled: boolean;
   twoFactorSecret: string | null;
+  emailTwoFactorEnabled: boolean;
+  emailTwoFactorPendingCodeHash: string | null;
+  emailTwoFactorPendingExpiresAt: Date | null;
 };
 
 export async function findUserForCredentials(email: string) {
@@ -21,7 +24,7 @@ export async function findUserForCredentials(email: string) {
     (UserAuthRecord & { passwordHash: string })[]
   >(
     Prisma.sql`
-      SELECT "id", "email", "name", "passwordHash", "role", "isActive", "archivedAt", "isSuspended", "isAnonymized", "twoFactorEnabled", "twoFactorSecret"
+      SELECT "id", "email", "name", "passwordHash", "role", "isActive", "archivedAt", "isSuspended", "isAnonymized", "twoFactorEnabled", "twoFactorSecret", "emailTwoFactorEnabled", "emailTwoFactorPendingCodeHash", "emailTwoFactorPendingExpiresAt"
       FROM "User"
       WHERE "email" = ${email}
       LIMIT 1
@@ -74,12 +77,14 @@ export async function findUserForSession(id: string) {
 export async function createCustomerAccount(input: {
   name: string;
   email: string;
+  phone: string;
   passwordHash: string;
 }) {
   return prisma.user.create({
     data: {
       name: input.name,
       email: input.email,
+      phone: input.phone,
       passwordHash: input.passwordHash,
     },
     select: {

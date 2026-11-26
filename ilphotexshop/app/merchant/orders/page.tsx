@@ -3,7 +3,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { OrderStatus } from "@prisma/client";
 import { ClipboardList, Eye, ShoppingBag } from "lucide-react";
-import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  requireMerchantPageUser,
+  requireMerchantWorkspacePermission,
+} from "@/lib/authorization";
 import { getMerchantOrders } from "@/lib/data-access/merchant-dashboard";
 
 export const metadata: Metadata = {
@@ -19,11 +22,12 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
 });
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default function MerchantOrdersPage({
+export default async function MerchantOrdersPage({
   searchParams,
 }: {
   searchParams: SearchParams;
 }) {
+  await requireMerchantWorkspacePermission("canManageOrders");
   return (
     <Suspense fallback={<div className="merchant-loading">Loading your orders…</div>}>
       <MerchantOrdersContent searchParams={searchParams} />
@@ -49,6 +53,9 @@ async function MerchantOrdersContent({
     { label: "All orders", value: "", count: result.total },
     { label: "Pending", value: OrderStatus.pending, count: result.pending },
     { label: "Confirmed", value: OrderStatus.confirmed, count: result.confirmed },
+    { label: "Processing", value: OrderStatus.processing, count: result.processing },
+    { label: "Shipped", value: OrderStatus.shipped, count: result.shipped },
+    { label: "Delivered", value: OrderStatus.delivered, count: result.delivered },
     { label: "Fulfilled", value: OrderStatus.fulfilled, count: result.fulfilled },
     { label: "Cancelled", value: OrderStatus.cancelled, count: result.cancelled },
   ];

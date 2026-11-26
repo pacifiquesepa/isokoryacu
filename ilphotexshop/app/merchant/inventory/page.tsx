@@ -5,7 +5,10 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { AlertTriangle, ArrowUpRight, Boxes, History } from "lucide-react";
 import MerchantInventoryAdjustForm from "@/components/merchant/inventory-adjust-form";
-import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  requireMerchantPageUser,
+  requireMerchantWorkspacePermission,
+} from "@/lib/authorization";
 import {
   getMerchantInventory,
   getMerchantStockMovements,
@@ -22,11 +25,12 @@ const dateFormat = new Intl.DateTimeFormat("en-RW", {
   timeZone: "UTC",
 });
 
-export default function MerchantInventoryPage({
+export default async function MerchantInventoryPage({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
+  await requireMerchantWorkspacePermission("canManageProducts");
   return (
     <Suspense fallback={<div className="merchant-loading">Loading inventory…</div>}>
       <MerchantInventoryContent searchParams={searchParams} />

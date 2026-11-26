@@ -4,7 +4,10 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { ArrowDownToLine, Wallet } from "lucide-react";
 import MerchantFinanceActions from "@/components/merchant/finance-actions";
-import { requireMerchantPageUser } from "@/lib/authorization";
+import {
+  requireMerchantPageUser,
+  requireMerchantWorkspacePermission,
+} from "@/lib/authorization";
 import { getMerchantFinanceData } from "@/lib/data-access/merchant-finance";
 
 export const metadata: Metadata = {
@@ -27,6 +30,7 @@ export default function MerchantFinancePage() {
 }
 
 async function MerchantFinanceContent() {
+  await requireMerchantWorkspacePermission("canManageFinancialProfile");
   await connection();
   const merchant = await requireMerchantPageUser();
   const finance = await getMerchantFinanceData(merchant);

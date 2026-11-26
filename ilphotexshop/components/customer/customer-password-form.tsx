@@ -8,7 +8,11 @@ type PasswordUpdateResponse = {
   details?: { fieldErrors?: Record<string, string[]> };
 };
 
-export default function CustomerPasswordForm() {
+export default function CustomerPasswordForm({
+  endpoint = "/api/account/password",
+}: {
+  endpoint?: string;
+} = {}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -27,7 +31,7 @@ export default function CustomerPasswordForm() {
 
     let passwordUpdated = false;
     try {
-      const response = await fetch("/api/account/password", {
+      const response = await fetch(endpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

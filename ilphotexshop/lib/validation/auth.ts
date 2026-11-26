@@ -33,14 +33,26 @@ export const registerSchema = z
   .object({
     name: z.string().trim().min(2).max(100),
     email: emailSchema,
+    phone: phoneNumberSchema,
     password: registrationPasswordSchema,
+    confirmPassword: registrationPasswordSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.password !== value.confirmPassword) {
+      context.addIssue({
+        code: "custom",
+        message: "Passwords do not match",
+        path: ["confirmPassword"],
+      });
+    }
+  });
 
 export const credentialsSchema = z
   .object({
     email: emailSchema,
     password: passwordSchema.min(1),
     totpCode: z.string().regex(/^[0-9]{6}$/).optional(),
+    emailOtpCode: z.string().regex(/^[0-9]{6}$/).optional(),
   })
   .strict();

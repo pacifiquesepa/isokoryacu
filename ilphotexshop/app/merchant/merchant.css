@@ -12,6 +12,35 @@
   font-size: 14px;
 }
 
+@media (max-width: 360px) {
+  .merchant-metrics,
+  .merchant-product-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .merchant-metric-card,
+  .merchant-product-summary > div {
+    min-height: 96px;
+  }
+
+  .merchant-content {
+    padding-inline: 9px;
+  }
+
+  .merchant-page-heading h1,
+  .merchant-record-heading h1 {
+    font-size: 21px;
+  }
+
+  .merchant-new-product {
+    display: none;
+  }
+
+  .merchant-filter-tabs {
+    flex-wrap: nowrap;
+  }
+}
+
 .merchant-topbar {
   position: sticky;
   z-index: 40;
@@ -2236,6 +2265,44 @@
   .merchant-catalog-chart {
     justify-content: flex-start;
     gap: 12px;
+  }
+
+  .merchant-page-heading .merchant-primary-action,
+  .merchant-page-heading .merchant-secondary-action,
+  .merchant-record-heading-actions,
+  .merchant-record-heading-actions > * {
+    width: 100%;
+  }
+
+  .merchant-row-action-group,
+  .merchant-order-actions,
+  .merchant-form-actions {
+    min-width: 145px;
+    flex-wrap: wrap;
+  }
+
+  .merchant-table-wrap {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .merchant-table-wrap .merchant-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .merchant-table-action,
+  .merchant-filter-tabs a,
+  .merchant-primary-action,
+  .merchant-secondary-action {
+    min-height: 40px;
+  }
+
+  .merchant-form-grid fieldset,
+  .merchant-staff-card,
+  .merchant-finance-action-grid > *,
+  .merchant-info-banner {
+    width: 100%;
   }
 }
 

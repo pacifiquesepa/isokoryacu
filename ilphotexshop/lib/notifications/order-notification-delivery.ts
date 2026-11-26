@@ -102,8 +102,15 @@ export async function dispatchOrderNotifications(
 
   for (const notification of pending) {
     try {
+      if (!notification.orderId) {
+        await prisma.orderNotification.update({
+          where: { id: notification.id },
+          data: { status: OrderNotificationStatus.failed, error: "General notification has no order to deliver" },
+        });
+        continue;
+      }
       if (notification.channel === OrderNotificationChannel.email) {
-        await sendEmail(notification);
+        await sendEmail({ ...notification, orderId: notification.orderId });
       }
       await prisma.orderNotification.update({
         where: { id: notification.id },
@@ -210,7 +217,7 @@ export async function retryOrderNotification(id: string) {
     where: { id },
     select: { orderId: true, eventType: true },
   });
-  if (!notification) return null;
+  if (!notification?.orderId) return null;
   return dispatchOrderNotifications(
     notification.orderId,
     notification.eventType,

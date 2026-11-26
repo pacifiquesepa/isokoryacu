@@ -33,6 +33,7 @@ export async function POST(request: Request) {
       await createCustomerAccount({
         name: parsedBody.data.name,
         email: parsedBody.data.email,
+        phone: parsedBody.data.phone,
         passwordHash,
       });
     } catch (error) {
